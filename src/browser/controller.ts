@@ -1,8 +1,14 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 export interface BrowserControllerOptions {
   port?: number;
   profileDir?: string;
   executablePath?: string;
   headless?: boolean;
+  launchIfNeeded?: boolean;
 }
 
 interface CdpTarget {
@@ -15,6 +21,7 @@ export class BrowserController {
   private readonly options: BrowserControllerOptions;
   private socket?: WebSocket;
   private sequence = 0;
+  private process?: ChildProcess;
 
   constructor(options: BrowserControllerOptions = {}) {
     this.options = options;
@@ -22,25 +29,72 @@ export class BrowserController {
   }
 
   async connect(): Promise<void> {
-    const response = await fetch(`http://127.0.0.1:${this.port}/json/list`);
-    if (!response.ok) throw new Error(`Chrome DevTools HTTP ${response.status}`);
-    const targets = (await response.json()) as CdpTarget[];
-    const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
-    if (!page?.webSocketDebuggerUrl) {
-      throw new Error("No Chrome page target is available. Start Chrome with remote debugging first.");
+    if (await this.tryConnect()) return;
+    if (this.options.launchIfNeeded === false) {
+      throw new Error("Chrome DevTools is not available.");
     }
-    this.socket = new WebSocket(page.webSocketDebuggerUrl);
-    await new Promise<void>((resolve, reject) => {
-      const socket = this.socket!;
-      const onOpen = () => { cleanup(); resolve(); };
-      const onError = () => { cleanup(); reject(new Error("Could not connect to Chrome DevTools")); };
-      const cleanup = () => {
-        socket.removeEventListener("open", onOpen);
-        socket.removeEventListener("error", onError);
-      };
-      socket.addEventListener("open", onOpen);
-      socket.addEventListener("error", onError);
-    });
+    await this.launchChrome();
+    for (let attempt = 0; attempt < 30; attempt++) {
+      if (await this.tryConnect()) return;
+      await this.wait(500);
+    }
+    throw new Error("Could not start Chrome with remote debugging enabled.");
+  }
+
+  private async tryConnect(): Promise<boolean> {
+    try {
+      const response = await fetch(`http://127.0.0.1:${this.port}/json/list`);
+      if (!response.ok) return false;
+      const targets = (await response.json()) as CdpTarget[];
+      const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
+      if (!page?.webSocketDebuggerUrl) return false;
+      this.socket = new WebSocket(page.webSocketDebuggerUrl);
+      await new Promise<void>((resolve, reject) => {
+        const socket = this.socket!;
+        const onOpen = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error("Could not connect to Chrome DevTools")); };
+        const cleanup = () => {
+          socket.removeEventListener("open", onOpen);
+          socket.removeEventListener("error", onError);
+        };
+        socket.addEventListener("open", onOpen);
+        socket.addEventListener("error", onError);
+      });
+      return true;
+    } catch {
+      this.socket = undefined;
+      return false;
+    }
+  }
+
+  private async launchChrome(): Promise<void> {
+    const executable = this.options.executablePath ?? this.findChrome();
+    if (!executable) throw new Error("Chrome executable not found. Set COMMERCA_CHROME_PATH if needed.");
+    const profileDir = this.options.profileDir ?? join(homedir(), ".commerca-cli", "chrome-profile");
+    mkdirSync(profileDir, { recursive: true });
+    const args = [
+      `--remote-debugging-port=${this.port}`,
+      `--user-data-dir=${profileDir}`,
+      "--no-first-run",
+      "--no-default-browser-check",
+    ];
+    if (this.options.headless) args.push("--headless=new");
+    this.process = spawn(executable, args, { detached: false, stdio: "ignore" });
+  }
+
+  private findChrome(): string | undefined {
+    const explicit = process.env.COMMERCA_CHROME_PATH;
+    if (explicit && existsSync(explicit)) return explicit;
+    const candidates = process.platform === "win32"
+      ? [
+          join(process.env.PROGRAMFILES ?? "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
+          join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
+          join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData\\Local"), "Google\\Chrome\\Application\\chrome.exe"),
+        ]
+      : process.platform === "darwin"
+        ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+        : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+    return candidates.find((candidate) => existsSync(candidate));
   }
 
   async open(url: string): Promise<void> {
@@ -70,9 +124,7 @@ export class BrowserController {
   }
 
   private command<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
-      return Promise.reject(new Error("Browser is not connected"));
-    }
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Browser is not connected"));
     const id = ++this.sequence;
     return new Promise<T>((resolve, reject) => {
       const socket = this.socket!;
