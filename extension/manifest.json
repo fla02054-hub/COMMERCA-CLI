@@ -8,7 +8,7 @@
   "content_scripts": [
     {
       "matches": ["https://shopee.co.th/*"],
-      "js": ["content/shopee-bridge.js"],
+      "js": ["content/shopee-bridge.js", "content/cli-bridge.js"],
       "run_at": "document_idle"
     }
   ]
