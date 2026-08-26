@@ -1,9 +1,7 @@
 import { createWorkflow, runWorkflow } from "../runtime/index.js";
 import {
-  LocalProductDiscovery,
-  ProductProviderRegistry,
-  ShopeeProvider,
   readShopeeProductDetail,
+  ShopeeBrowserProvider,
 } from "../product/index.js";
 
 const args = process.argv.slice(2);
@@ -16,12 +14,9 @@ if (args[0] === "workflow" && args[1] === "run") {
 }
 
 if (args[0] === "product" && args[1] === "providers") {
-  const registry = new ProductProviderRegistry();
-  registry.register(new ShopeeProvider());
-
   console.log("");
   console.log("=== PRODUCT PROVIDERS ===");
-  for (const provider of registry.list()) console.log(`- ${provider.name}`);
+  console.log("- shopee-browser (Chrome Extension)");
   console.log("");
   process.exit(0);
 }
@@ -34,8 +29,8 @@ if (args[0] === "product" && args[1] === "search") {
   }
 
   try {
-    const discovery = new LocalProductDiscovery({ detailLimit: 10 });
-    const products = await discovery.search(query);
+    const provider = new ShopeeBrowserProvider();
+    const products = await provider.search(query);
 
     console.log("");
     console.log("=== SHOPEE PRODUCT DISCOVERY ===");
