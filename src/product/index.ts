@@ -7,3 +7,13 @@ export type { ProductProvider } from "./providers/index.js";
 export { ShopeeProvider } from "./providers/index.js";
 
 export { ProductProviderRegistry } from "./registry.js";
+
+export {
+  analyzeProduct,
+  type ProductAnalysis,
+} from "./analysis.js";
+
+export {
+  rankProducts,
+  selectBestProduct,
+} from "./selection.js";
