@@ -5,7 +5,7 @@
     return match ? Number(match[0].replace(/[^0-9.]/g, '')) : undefined;
   };
 
-  function readCards() {
+  const readCards = () => {
     const links = [...document.querySelectorAll('a[href*="/product/"]')];
     const seen = new Set();
     const products = [];
@@ -15,54 +15,43 @@
       seen.add(url);
       const card = link.closest('div') || link;
       const text = card.innerText || '';
-      const lines = clean(text).split(/\n+/).map(clean).filter(Boolean);
-      const price = money(text);
-      const name = lines.find((line) => line.length >= 3 && !/^(฿|THB|ขายแล้ว|sold|%|ลด|Mall)/i.test(line)) || clean(link.innerText) || 'Shopee product';
-      products.push({ name, price, url, source: 'shopee-extension' });
+      const lines = text.split(/\n+/).map(clean).filter(Boolean);
+      products.push({ name: lines.find((line) => line.length >= 3 && !/^(฿|THB|ขายแล้ว|sold|%|ลด|Mall)/i.test(line)) || clean(link.innerText) || 'Shopee product', price: money(text), url, source: 'shopee-extension' });
       if (products.length >= 50) break;
     }
     return products;
-  }
+  };
 
-  function readDetail() {
-    const body = clean(document.body?.innerText || '');
-    const meta = (selector) => document.querySelector(selector)?.getAttribute('content') || '';
-    const prices = [...body.matchAll(/(?:฿|THB\s*)[0-9][0-9,.]*/gi)]
-      .map((m) => Number(m[0].replace(/[^0-9.]/g, '')))
-      .filter((n) => Number.isFinite(n) && n > 0);
-    const lines = body.split(/\n+/).map(clean).filter(Boolean);
-    const promotions = lines.filter((line) => /คูปอง|โค้ด|voucher|coupon|โปรโมชั่น|ส่งฟรี|ส่วนลด/i.test(line));
-    const sold = body.match(/(?:ขายแล้ว|sold)[^0-9]{0,20}([0-9,.]+[KkMm]?)/i);
-    const rating = body.match(/(?:คะแนน|rating)[^0-9]{0,20}([0-5](?:\.[0-9])?)/i);
-    const reviews = body.match(/([0-9,.]+)\s*(?:รีวิว|ratings|reviews)/i);
-    const discount = body.match(/([0-9]{1,3})%\s*(?:ลด|off)/i);
-    return {
-      name: meta('meta[property="og:title"]') || document.title || lines[0] || 'Shopee product',
-      price: prices.length ? Math.min(...prices) : undefined,
-      originalPrice: prices.length > 1 ? Math.max(...prices) : undefined,
-      discount: discount ? Number(discount[1]) : undefined,
-      rating: rating ? Number(rating[1]) : undefined,
-      reviewCount: reviews ? Number(reviews[1].replace(/,/g, '')) : undefined,
-      salesCount: sold ? sold[1] : undefined,
-      promotion: promotions.join(' | ') || undefined,
-      coupon: promotions.find((x) => /คูปอง|coupon/i.test(x)) || undefined,
-      voucher: promotions.find((x) => /โค้ด|voucher/i.test(x)) || undefined,
-      mall: /Shopee Mall/i.test(body),
-      image: meta('meta[property="og:image"]') || undefined,
-      url: location.href,
-      source: 'shopee-extension'
-    };
-  }
+  const search = async (query) => {
+    const input = document.querySelector('input[placeholder*="ค้นหา"], input[placeholder*="Search"], input[type="search"]');
+    if (!input) throw new Error('ไม่พบช่องค้นหา Shopee');
+    input.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')?.set;
+    setter?.call(input, query);
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 7000));
+    return { url: location.href, products: readCards() };
+  };
 
-  window.addEventListener('message', (event) => {
-    if (event.source !== window) return;
-    const message = event.data;
-    if (!message || message.source !== 'COMMERCA_CLI') return;
-    let result;
-    if (message.type === 'PING') result = { ok: true, url: location.href };
-    else if (message.type === 'SEARCH_RESULTS') result = { products: readCards() };
-    else if (message.type === 'PRODUCT_DETAIL') result = readDetail();
-    else return;
-    window.postMessage({ source: 'COMMERCA_EXTENSION', requestId: message.requestId, result }, '*');
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (message?.type !== 'SEARCH') return false;
+    search(message.query).then(sendResponse).catch((error) => sendResponse({ error: String(error) }));
+    return true;
+  });
+
+  window.addEventListener('message', async (event) => {
+    if (event.source !== window || event.data?.source !== 'COMMERCA_CLI') return;
+    const { requestId, type, query } = event.data;
+    try {
+      let result;
+      if (type === 'PING') result = { ok: true, url: location.href };
+      else if (type === 'SEARCH') result = await search(query);
+      else return;
+      window.postMessage({ source: 'COMMERCA_EXTENSION', requestId, result }, '*');
+    } catch (error) {
+      window.postMessage({ source: 'COMMERCA_EXTENSION', requestId, error: String(error) }, '*');
+    }
   });
 })();
