@@ -1,0 +1,14 @@
+{
+  "name": "commerca-cli",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx src/cli/index.ts",
+    "start": "tsx src/cli/index.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.12",
+    "typescript": "^7.0.2"
+  }
+}
