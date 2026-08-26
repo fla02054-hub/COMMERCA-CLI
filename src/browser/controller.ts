@@ -1,7 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 export interface BrowserControllerOptions {
   port?: number;
@@ -9,6 +9,7 @@ export interface BrowserControllerOptions {
   executablePath?: string;
   headless?: boolean;
   launchIfNeeded?: boolean;
+  extensionPath?: string;
 }
 
 interface CdpTarget {
@@ -49,9 +50,9 @@ export class BrowserController {
       const page = targets.find((target) => target.type === "page" && target.webSocketDebuggerUrl);
       if (!page?.webSocketDebuggerUrl) return false;
       this.socket = new WebSocket(page.webSocketDebuggerUrl);
-      await new Promise<void>((resolve, reject) => {
+      await new Promise<void>((resolvePromise, reject) => {
         const socket = this.socket!;
-        const onOpen = () => { cleanup(); resolve(); };
+        const onOpen = () => { cleanup(); resolvePromise(); };
         const onError = () => { cleanup(); reject(new Error("Could not connect to Chrome DevTools")); };
         const cleanup = () => {
           socket.removeEventListener("open", onOpen);
@@ -78,6 +79,11 @@ export class BrowserController {
       "--no-first-run",
       "--no-default-browser-check",
     ];
+    const extensionPath = this.options.extensionPath ?? resolve(process.cwd(), "extension");
+    if (existsSync(extensionPath)) {
+      args.push(`--disable-extensions-except=${extensionPath}`);
+      args.push(`--load-extension=${extensionPath}`);
+    }
     if (this.options.headless) args.push("--headless=new");
     this.process = spawn(executable, args, { detached: false, stdio: "ignore" });
   }
@@ -115,7 +121,7 @@ export class BrowserController {
   }
 
   async wait(ms: number): Promise<void> {
-    await new Promise((resolve) => setTimeout(resolve, ms));
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
   }
 
   close(): void {
@@ -126,14 +132,14 @@ export class BrowserController {
   private command<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Browser is not connected"));
     const id = ++this.sequence;
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<T>((resolvePromise, reject) => {
       const socket = this.socket!;
       const listener = (event: MessageEvent) => {
         const response = JSON.parse(String(event.data)) as { id?: number; result?: T; error?: { message: string } };
         if (response.id !== id) return;
         socket.removeEventListener("message", listener);
         if (response.error) reject(new Error(response.error.message));
-        else resolve(response.result as T);
+        else resolvePromise(response.result as T);
       };
       socket.addEventListener("message", listener);
       socket.send(JSON.stringify({ id, method, params }));
