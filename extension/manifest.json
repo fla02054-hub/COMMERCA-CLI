@@ -1,10 +1,11 @@
 {
   "manifest_version": 3,
   "name": "COMMERCA Shopee Bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Bridge between COMMERCA-CLI and the real Shopee page for browser-driven product discovery.",
-  "permissions": [],
-  "host_permissions": ["https://shopee.co.th/*"],
+  "permissions": ["tabs"],
+  "host_permissions": ["https://shopee.co.th/*", "http://127.0.0.1:8765/*"],
+  "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
       "matches": ["https://shopee.co.th/*"],
