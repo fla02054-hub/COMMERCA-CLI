@@ -9,6 +9,7 @@ export {
 export type { ProductProvider } from "./providers/index.js";
 export {
   ShopeeProvider,
+  ShopeeBrowserProvider,
   type ShopeeSearchOptions,
 } from "./providers/index.js";
 
