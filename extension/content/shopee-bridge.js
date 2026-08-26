@@ -14,8 +14,9 @@
       if (!url || seen.has(url)) continue;
       seen.add(url);
       const card = link.closest('div') || link;
-      const lines = clean(card.innerText || '').split(/\n+/).map(clean).filter(Boolean);
-      const price = money(card.innerText);
+      const text = card.innerText || '';
+      const lines = clean(text).split(/\n+/).map(clean).filter(Boolean);
+      const price = money(text);
       const name = lines.find((line) => line.length >= 3 && !/^(฿|THB|ขายแล้ว|sold|%|ลด|Mall)/i.test(line)) || clean(link.innerText) || 'Shopee product';
       products.push({ name, price, url, source: 'shopee-extension' });
       if (products.length >= 50) break;
@@ -62,6 +63,6 @@
     else if (message.type === 'SEARCH_RESULTS') result = { products: readCards() };
     else if (message.type === 'PRODUCT_DETAIL') result = readDetail();
     else return;
-    window.postMessage({ source: 'COMMERCA_SHOPEE_EXTENSION', requestId: message.requestId, result }, '*');
+    window.postMessage({ source: 'COMMERCA_EXTENSION', requestId: message.requestId, result }, '*');
   });
 })();
