@@ -1,67 +1,38 @@
 const BRIDGE = 'http://127.0.0.1:8765';
-const ALARM_NAME = 'commerca-poll';
 let busy = false;
-let lastCommandId = null;
 
-chrome.runtime.onInstalled.addListener(() => {
-  chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.0167 });
-});
-
-chrome.runtime.onStartup.addListener(() => {
-  chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.0167 });
-});
-
-chrome.alarms.onAlarm.addListener((alarm) => {
-  if (alarm.name === ALARM_NAME) poll();
-});
-
-async function poll() {
-  if (busy) return;
-  try {
-    const response = await fetch(`${BRIDGE}/command`, { cache: 'no-store' });
-    if (!response.ok || response.status === 204) return;
-
-    const command = await response.json();
-    if (!command?.id || command.type !== 'SEARCH' || command.id === lastCommandId) return;
-
-    busy = true;
-    lastCommandId = command.id;
-
-    try {
-      const tabs = await chrome.tabs.query({
-        url: ['https://shopee.co.th/*'],
-        active: true,
-        currentWindow: true,
-      });
-      const fallback = await chrome.tabs.query({ url: ['https://shopee.co.th/*'] });
-      const tab = tabs[0] || fallback[0];
-
-      if (!tab?.id) {
-        throw new Error('ไม่พบแท็บ Shopee ที่เปิดอยู่ใน Chrome ตัวนี้');
-      }
-
-      const result = await chrome.tabs.sendMessage(tab.id, {
-        type: 'SEARCH',
-        query: command.query,
-      });
-
-      await postResult(command.id, result);
-    } catch (error) {
-      await postResult(command.id, undefined, String(error));
-    } finally {
-      busy = false;
-    }
-  } catch {
-    // CLI bridge is normally offline until a search command starts.
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === 'POLL_COMMAND') {
+    getCommand().then(sendResponse).catch(() => sendResponse(null));
+    return true;
   }
+
+  if (message?.type === 'SEARCH_RESULT') {
+    postResult(message.id, message.result, message.error).catch(() => {});
+    return false;
+  }
+
+  return false;
+});
+
+async function getCommand() {
+  if (busy) return null;
+  const response = await fetch(`${BRIDGE}/command`, { cache: 'no-store' });
+  if (!response.ok || response.status === 204) return null;
+  const command = await response.json();
+  if (!command?.id || command.type !== 'SEARCH') return null;
+  busy = true;
+  return command;
 }
 
 async function postResult(id, result, error) {
-  await fetch(`${BRIDGE}/result`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ id, result, error }),
-  });
+  try {
+    await fetch(`${BRIDGE}/result`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ id, result, error }),
+    });
+  } finally {
+    busy = false;
+  }
 }
-
-chrome.alarms.create(ALARM_NAME, { periodInMinutes: 0.0167 });
