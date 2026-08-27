@@ -1,9 +1,21 @@
 const BRIDGE = 'http://127.0.0.1:8765';
 let busy = false;
 
-chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'POLL_COMMAND') {
     getCommand().then(sendResponse).catch(() => sendResponse(null));
+    return true;
+  }
+
+  if (message?.type === 'SEARCH') {
+    const tabId = sender.tab?.id;
+    if (!tabId) {
+      sendResponse({ error: 'SEARCH command came from a context without a Shopee tab.' });
+      return false;
+    }
+    chrome.tabs.sendMessage(tabId, { type: 'SEARCH', query: message.query })
+      .then(sendResponse)
+      .catch((error) => sendResponse({ error: String(error) }));
     return true;
   }
 
