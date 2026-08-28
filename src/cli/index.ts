@@ -1,10 +1,19 @@
 import { createWorkflow, runWorkflow } from "../runtime/index.js";
 import {
+  ProductProviderRegistry,
+  RakatookyangProvider,
   readShopeeProductDetail,
   ShopeeBrowserProvider,
 } from "../product/index.js";
 
 const args = process.argv.slice(2);
+
+function createProductRegistry(): ProductProviderRegistry {
+  const registry = new ProductProviderRegistry();
+  registry.register(new ShopeeBrowserProvider());
+  registry.register(new RakatookyangProvider());
+  return registry;
+}
 
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
@@ -14,26 +23,50 @@ if (args[0] === "workflow" && args[1] === "run") {
 }
 
 if (args[0] === "product" && args[1] === "providers") {
+  const registry = createProductRegistry();
+
   console.log("");
   console.log("=== PRODUCT PROVIDERS ===");
-  console.log("- shopee-browser (Chrome Extension)");
+  for (const provider of registry.list()) {
+    console.log(`- ${provider.name}`);
+  }
   console.log("");
   process.exit(0);
 }
 
 if (args[0] === "product" && args[1] === "search") {
-  const query = args.slice(2).join(" ").trim();
+  const registry = createProductRegistry();
+  let providerName = "shopee-browser";
+  let queryArgs = args.slice(2);
+
+  if (queryArgs[0] === "--provider") {
+    providerName = queryArgs[1] ?? "";
+    queryArgs = queryArgs.slice(2);
+  } else if (queryArgs[0] && registry.get(queryArgs[0])) {
+    providerName = queryArgs[0];
+    queryArgs = queryArgs.slice(1);
+  }
+
+  const query = queryArgs.join(" ").trim();
   if (!query) {
     console.error("Error: product search requires a query.");
     process.exit(1);
   }
 
+  const provider = registry.get(providerName);
+  if (!provider) {
+    console.error(`Error: unknown product provider: ${providerName}`);
+    console.error("Available providers:");
+    for (const item of registry.list()) console.error(`- ${item.name}`);
+    process.exit(1);
+  }
+
   try {
-    const provider = new ShopeeBrowserProvider();
     const products = await provider.search(query);
 
     console.log("");
-    console.log("=== SHOPEE PRODUCT DISCOVERY ===");
+    console.log("=== PRODUCT DISCOVERY ===");
+    console.log(`Provider: ${provider.name}`);
     console.log(`Query: ${query}`);
     console.log(`Products found: ${products.length}`);
     console.log("");
@@ -52,7 +85,7 @@ if (args[0] === "product" && args[1] === "search") {
       console.log("");
     });
   } catch (error) {
-    console.error(`Shopee browser search failed: ${String(error)}`);
+    console.error(`${provider.name} product search failed: ${String(error)}`);
     process.exit(1);
   }
 
@@ -83,6 +116,8 @@ console.log("Commerce Automation Runtime");
 console.log("");
 console.log("Commands:");
 console.log("  product search <query>");
+console.log("  product search <provider> <query>");
+console.log("  product search --provider <provider> <query>");
 console.log("  product detail <shopee-url>");
 console.log("  product providers");
 console.log("  workflow run <goal>");
