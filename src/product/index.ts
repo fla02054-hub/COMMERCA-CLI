@@ -10,6 +10,7 @@ export type { ProductProvider } from "./providers/index.js";
 export {
   ShopeeProvider,
   ShopeeBrowserProvider,
+  RakatookyangProvider,
   type ShopeeSearchOptions,
 } from "./providers/index.js";
 
