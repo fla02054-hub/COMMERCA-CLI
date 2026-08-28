@@ -2,6 +2,7 @@ import { createWorkflow, runWorkflow } from "../runtime/index.js";
 import {
   ProductProviderRegistry,
   RakatookyangProvider,
+  readRakatookyangPriceHistory,
   readShopeeProductDetail,
   ShopeeBrowserProvider,
 } from "../product/index.js";
@@ -24,13 +25,45 @@ if (args[0] === "workflow" && args[1] === "run") {
 
 if (args[0] === "product" && args[1] === "providers") {
   const registry = createProductRegistry();
-
   console.log("");
   console.log("=== PRODUCT PROVIDERS ===");
-  for (const provider of registry.list()) {
-    console.log(`- ${provider.name}`);
-  }
+  for (const provider of registry.list()) console.log(`- ${provider.name}`);
   console.log("");
+  process.exit(0);
+}
+
+if (args[0] === "product" && args[1] === "price-history") {
+  const url = args.slice(2).join(" ").trim();
+  if (!url) {
+    console.error("Error: product price-history requires a Shopee product URL.");
+    process.exit(1);
+  }
+
+  try {
+    const product = await readRakatookyangPriceHistory(url);
+    console.log("");
+    console.log("=== RAKATOOKYANG PRICE HISTORY ===");
+    console.log(`Product: ${product.name}`);
+    if (product.price !== undefined) console.log(`Current: ฿${product.price.toLocaleString()}`);
+    if (product.lowestPrice !== undefined) console.log(`Lowest: ฿${product.lowestPrice.toLocaleString()}`);
+    if (product.averagePrice !== undefined) console.log(`Average: ฿${product.averagePrice.toLocaleString()}`);
+    if (product.originalPrice !== undefined) console.log(`Original: ฿${product.originalPrice.toLocaleString()}`);
+    if (product.discount !== undefined) console.log(`Discount: ${product.discount}%`);
+    if (product.rating !== undefined) console.log(`Rating: ${product.rating}`);
+    if (product.reviewCount !== undefined) console.log(`Reviews: ${product.reviewCount.toLocaleString()}`);
+    if (product.seller) console.log(`Seller: ${product.seller}`);
+    console.log(`Shopee URL: ${product.url}`);
+    console.log(`History points: ${product.priceHistory?.length ?? 0}`);
+    console.log("");
+    if (product.priceHistory?.length) {
+      for (const point of product.priceHistory) {
+        console.log(`- ${point.date ?? "date unavailable"}: ฿${point.price.toLocaleString()}`);
+      }
+    }
+  } catch (error) {
+    console.error(`rakatookyang price history failed: ${String(error)}`);
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -56,21 +89,17 @@ if (args[0] === "product" && args[1] === "search") {
   const provider = registry.get(providerName);
   if (!provider) {
     console.error(`Error: unknown product provider: ${providerName}`);
-    console.error("Available providers:");
-    for (const item of registry.list()) console.error(`- ${item.name}`);
     process.exit(1);
   }
 
   try {
     const products = await provider.search(query);
-
     console.log("");
     console.log("=== PRODUCT DISCOVERY ===");
     console.log(`Provider: ${provider.name}`);
     console.log(`Query: ${query}`);
     console.log(`Products found: ${products.length}`);
     console.log("");
-
     products.forEach((product, index) => {
       console.log(`${index + 1}. ${product.name}`);
       if (product.price !== undefined) console.log(`   Price: ฿${product.price.toLocaleString()}`);
@@ -88,7 +117,6 @@ if (args[0] === "product" && args[1] === "search") {
     console.error(`${provider.name} product search failed: ${String(error)}`);
     process.exit(1);
   }
-
   process.exit(0);
 }
 
@@ -98,7 +126,6 @@ if (args[0] === "product" && args[1] === "detail") {
     console.error("Error: product detail requires a Shopee URL.");
     process.exit(1);
   }
-
   try {
     const product = await readShopeeProductDetail(url);
     console.log(JSON.stringify(product, null, 2));
@@ -106,7 +133,6 @@ if (args[0] === "product" && args[1] === "detail") {
     console.error(`Shopee browser detail failed: ${String(error)}`);
     process.exit(1);
   }
-
   process.exit(0);
 }
 
@@ -119,6 +145,7 @@ console.log("  product search <query>");
 console.log("  product search <provider> <query>");
 console.log("  product search --provider <provider> <query>");
 console.log("  product detail <shopee-url>");
+console.log("  product price-history <shopee-url>");
 console.log("  product providers");
 console.log("  workflow run <goal>");
 console.log("");
