@@ -19,6 +19,11 @@ export {
   type ShopeeProductDetail,
 } from "./shopee-detail.js";
 
+export {
+  readRakatookyangPriceHistory,
+  type RakatookyangPriceResult,
+} from "./rakatookyang-price.js";
+
 export { ProductProviderRegistry } from "./registry.js";
 
 export {
