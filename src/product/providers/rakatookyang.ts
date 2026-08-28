@@ -5,6 +5,27 @@ import { BrowserController } from "../../browser/controller.js";
 const BASE_URL = "https://rakatookyang.com/";
 const MAX_PRODUCTS = 50;
 
+interface BrowserProduct {
+  name: string;
+  price?: number;
+  originalPrice?: number;
+  discount?: number;
+  rating?: number;
+  reviewCount?: number;
+  salesCount?: number;
+  seller?: string;
+  url?: string;
+  image?: string;
+}
+
+interface BrowserSearchResult {
+  url?: string;
+  title?: string;
+  status?: "ready" | "blocked" | "empty";
+  products?: BrowserProduct[];
+  error?: string;
+}
+
 export class RakatookyangProvider implements ProductProvider {
   readonly name = "rakatookyang";
 
@@ -14,33 +35,27 @@ export class RakatookyangProvider implements ProductProvider {
     try {
       await browser.connect();
       await browser.open(BASE_URL);
-      await browser.wait(2500);
+      await browser.wait(3000);
 
-      const result = await browser.evaluate<{
-        url: string;
-        title: string;
-        status: "ready" | "blocked" | "empty";
-        products: Array<{
-          name: string;
-          price?: number;
-          originalPrice?: number;
-          discount?: number;
-          rating?: number;
-          reviewCount?: number;
-          salesCount?: number;
-          seller?: string;
-          url?: string;
-          image?: string;
-        }>;
-      }>(`(${buildBrowserSearch.toString()})(${JSON.stringify(query)}, ${MAX_PRODUCTS})`);
+      const result = await browser.evaluate<BrowserSearchResult>(
+        `(${buildBrowserSearch.toString()})(${JSON.stringify(query)}, ${MAX_PRODUCTS})`,
+      );
+
+      if (!result || !Array.isArray(result.products)) {
+        throw new Error(
+          `Rakatookyang browser returned an invalid result. URL: ${result?.url ?? "unknown"} Title: ${result?.title ?? "unknown"}`,
+        );
+      }
 
       if (result.status === "blocked") {
-        throw new Error(`Rakatookyang blocked browser access. URL: ${result.url}`);
+        throw new Error(
+          `Rakatookyang blocked browser access. URL: ${result.url ?? "unknown"}`,
+        );
       }
 
       if (result.products.length === 0) {
         throw new Error(
-          `Rakatookyang browser search returned 0 products. URL: ${result.url} Title: ${result.title}`,
+          `Rakatookyang browser search returned 0 products. URL: ${result.url ?? "unknown"} Title: ${result.title ?? "unknown"}`,
         );
       }
 
@@ -65,10 +80,13 @@ export class RakatookyangProvider implements ProductProvider {
   }
 }
 
-async function buildBrowserSearch(query: string, maxProducts: number) {
-  const blockedText = `${document.body?.innerText ?? ""} ${document.title}`.toLowerCase();
-  if (/captcha|access denied|too many requests|429|cloudflare|verify you are human/.test(blockedText)) {
-    return { url: location.href, title: document.title, status: "blocked" as const, products: [] };
+async function buildBrowserSearch(query: string, maxProducts: number): Promise<BrowserSearchResult> {
+  const getPageState = () => ({ url: location.href, title: document.title });
+  const pageState = getPageState();
+  const initialText = `${document.body?.innerText ?? ""} ${document.title}`.toLowerCase();
+
+  if (/captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(initialText)) {
+    return { ...pageState, status: "blocked", products: [] };
   }
 
   const input = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
@@ -77,27 +95,31 @@ async function buildBrowserSearch(query: string, maxProducts: number) {
       return /search|ค้นหา|keyword|query/.test(text);
     });
 
-  if (input) {
-    input.focus();
-    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-    setter?.call(input, query);
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-
-    const form = input.closest("form");
-    if (form) {
-      form.requestSubmit();
-    } else {
-      input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-      input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
-    }
+  if (!input) {
+    return { ...getPageState(), status: "empty", products: [], error: "Search input was not found on rakatookyang.com" };
   }
 
-  await new Promise((resolve) => setTimeout(resolve, 3500));
+  input.focus();
+  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+  if (setter) setter.call(input, query);
+  else input.value = query;
 
-  const bodyText = document.body?.innerText ?? "";
-  if (/captcha|access denied|too many requests|429|cloudflare|verify you are human/.test(bodyText.toLowerCase())) {
-    return { url: location.href, title: document.title, status: "blocked" as const, products: [] };
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+
+  const form = input.closest("form");
+  if (form) {
+    form.requestSubmit();
+  } else {
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
+  }
+
+  await new Promise((resolve) => setTimeout(resolve, 5000));
+
+  const afterText = document.body?.innerText ?? "";
+  if (/captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(afterText.toLowerCase())) {
+    return { ...getPageState(), status: "blocked", products: [] };
   }
 
   const absolute = (value: string) => {
@@ -111,21 +133,32 @@ async function buildBrowserSearch(query: string, maxProducts: number) {
     return Number.isFinite(value) ? value : undefined;
   };
 
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>("a[href], article, li, .product, [class*='product'], [class*='item']"));
-  const products: Array<{ name: string; price?: number; originalPrice?: number; discount?: number; rating?: number; reviewCount?: number; salesCount?: number; seller?: string; url?: string; image?: string }> = [];
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>("article, li, .product, [class*='product'], [class*='item'], a[href]"),
+  );
+  const products: BrowserProduct[] = [];
   const seen = new Set<string>();
 
   for (const element of candidates) {
     if (products.length >= maxProducts) break;
-    const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
-    const url = link?.href ? absolute(link.href) : undefined;
-    if (!url || seen.has(url) || new URL(url).hostname !== location.hostname) continue;
 
-    const text = (element.innerText || link.innerText || "").replace(/\s+/g, " ").trim();
+    const link = element.matches("a[href]")
+      ? element as HTMLAnchorElement
+      : element.querySelector<HTMLAnchorElement>("a[href]");
+    const url = link?.href ? absolute(link.href) : undefined;
+    if (!url || seen.has(url)) continue;
+
+    try {
+      if (new URL(url).hostname !== location.hostname) continue;
+    } catch {
+      continue;
+    }
+
+    const text = (element.innerText || link?.innerText || "").replace(/\s+/g, " ").trim();
     if (text.length < 4) continue;
 
     const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
-    const name = (nameElement?.innerText || link.innerText || "").replace(/\s+/g, " ").trim();
+    const name = (nameElement?.innerText || link?.innerText || "").replace(/\s+/g, " ").trim();
     if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
 
     const image = element.querySelector<HTMLImageElement>("img")?.src;
@@ -146,5 +179,5 @@ async function buildBrowserSearch(query: string, maxProducts: number) {
     });
   }
 
-  return { url: location.href, title: document.title, status: products.length ? "ready" as const : "empty" as const, products };
+  return { ...getPageState(), status: products.length ? "ready" : "empty", products };
 }
