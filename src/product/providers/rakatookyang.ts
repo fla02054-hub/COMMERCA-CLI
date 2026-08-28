@@ -9,6 +9,8 @@ interface BrowserProduct {
   name: string;
   price?: number;
   originalPrice?: number;
+  lowestPrice?: number;
+  averagePrice?: number;
   discount?: number;
   rating?: number;
   reviewCount?: number;
@@ -16,6 +18,7 @@ interface BrowserProduct {
   seller?: string;
   url?: string;
   image?: string;
+  promotion?: string;
 }
 
 interface BrowserSearchResult {
@@ -35,28 +38,20 @@ export class RakatookyangProvider implements ProductProvider {
     try {
       await browser.connect();
       await browser.open(BASE_URL);
-      await browser.wait(3000);
+      await browser.wait(2500);
 
       const result = await browser.evaluate<BrowserSearchResult>(
         `(${buildBrowserSearch.toString()})(${JSON.stringify(query)}, ${MAX_PRODUCTS})`,
       );
 
       if (!result || !Array.isArray(result.products)) {
-        throw new Error(
-          `Rakatookyang browser returned an invalid result. URL: ${result?.url ?? "unknown"} Title: ${result?.title ?? "unknown"}`,
-        );
+        throw new Error(`Rakatookyang browser returned an invalid result. URL: ${result?.url ?? "unknown"}`);
       }
-
       if (result.status === "blocked") {
-        throw new Error(
-          `Rakatookyang blocked browser access. URL: ${result.url ?? "unknown"}`,
-        );
+        throw new Error(`Rakatookyang blocked browser access. URL: ${result.url ?? "unknown"}`);
       }
-
       if (result.products.length === 0) {
-        throw new Error(
-          `Rakatookyang browser search returned 0 products. URL: ${result.url ?? "unknown"} Title: ${result.title ?? "unknown"}`,
-        );
+        throw new Error(`Rakatookyang returned 0 products. URL: ${result.url ?? "unknown"} Title: ${result.title ?? "unknown"}`);
       }
 
       return result.products.map((item, index) => ({
@@ -64,13 +59,15 @@ export class RakatookyangProvider implements ProductProvider {
         name: item.name,
         ...(item.price !== undefined ? { price: item.price } : {}),
         ...(item.originalPrice !== undefined ? { originalPrice: item.originalPrice } : {}),
+        ...(item.lowestPrice !== undefined ? { lowestPrice: item.lowestPrice } : {}),
+        ...(item.averagePrice !== undefined ? { averagePrice: item.averagePrice } : {}),
         ...(item.discount !== undefined ? { discount: item.discount } : {}),
         ...(item.rating !== undefined ? { rating: item.rating } : {}),
         ...(item.reviewCount !== undefined ? { reviewCount: item.reviewCount } : {}),
         ...(item.salesCount !== undefined ? { salesCount: item.salesCount } : {}),
         ...(item.seller ? { seller: item.seller } : {}),
+        ...(item.promotion ? { promotion: item.promotion } : {}),
         ...(item.url ? { url: item.url } : {}),
-        ...(item.image ? { image: item.image } : {}),
         source: "rakatookyang",
         discoveredAt: new Date().toISOString(),
       }));
@@ -81,91 +78,67 @@ export class RakatookyangProvider implements ProductProvider {
 }
 
 async function buildBrowserSearch(query: string, maxProducts: number): Promise<BrowserSearchResult> {
-  const getPageState = () => ({ url: location.href, title: document.title });
-  const pageState = getPageState();
-  const initialText = `${document.body?.innerText ?? ""} ${document.title}`.toLowerCase();
+  const state = () => ({ url: location.href, title: document.title });
+  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(text.toLowerCase());
 
-  if (/captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(initialText)) {
-    return { ...pageState, status: "blocked", products: [] };
+  if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
+    return { ...state(), status: "blocked", products: [] };
   }
 
-  const input = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
-    .find((element) => {
-      const text = `${element.placeholder} ${element.name} ${element.getAttribute("aria-label") ?? ""}`.toLowerCase();
-      return /search|ค้นหา|keyword|query/.test(text);
-    });
+  // Rakatookyang is primarily used around Shopee product pages. Support both:
+  // 1) an existing product URL supplied through the browser, and
+  // 2) the site's own search UI when one exists.
+  const shopeeLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="shopee.co.th"]'));
+  const searchInput = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
+    .find((element) => /search|ค้นหา|keyword|query/i.test(`${element.placeholder} ${element.name} ${element.getAttribute("aria-label") ?? ""}`));
 
-  if (!input) {
-    return { ...getPageState(), status: "empty", products: [], error: "Search input was not found on rakatookyang.com" };
+  if (searchInput) {
+    searchInput.focus();
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(searchInput), "value")?.set;
+    if (setter) setter.call(searchInput, query);
+    else searchInput.value = query;
+    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
+    searchInput.dispatchEvent(new Event("change", { bubbles: true }));
+    const form = searchInput.closest("form");
+    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => /ค้นหา|search/i.test(button.innerText || button.getAttribute("aria-label") || ""));
+    if (button) button.click();
+    else searchInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 4000));
   }
 
-  input.focus();
-  const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-  if (setter) setter.call(input, query);
-  else input.value = query;
+  const body = document.body?.innerText ?? "";
+  if (blocked(body)) return { ...state(), status: "blocked", products: [] };
 
-  input.dispatchEvent(new Event("input", { bubbles: true }));
-  input.dispatchEvent(new Event("change", { bubbles: true }));
-
-  const form = input.closest("form");
-  if (form) {
-    form.requestSubmit();
-  } else {
-    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-    input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
-  }
-
-  await new Promise((resolve) => setTimeout(resolve, 5000));
-
-  const afterText = document.body?.innerText ?? "";
-  if (/captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(afterText.toLowerCase())) {
-    return { ...getPageState(), status: "blocked", products: [] };
-  }
-
-  const absolute = (value: string) => {
-    try { return new URL(value, location.href).href; } catch { return undefined; }
-  };
-
-  const priceFrom = (text: string): number | undefined => {
-    const match = text.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? text.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
+  const clean = (value: string) => value.replace(/\s+/g, " ").trim();
+  const priceFrom = (value: string): number | undefined => {
+    const match = value.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? value.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
     if (!match) return undefined;
-    const value = Number(match[1].replace(/,/g, ""));
-    return Number.isFinite(value) ? value : undefined;
+    const number = Number(match[1].replace(/,/g, ""));
+    return Number.isFinite(number) ? number : undefined;
   };
 
-  const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>("article, li, .product, [class*='product'], [class*='item'], a[href]"),
-  );
   const products: BrowserProduct[] = [];
   const seen = new Set<string>();
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], [class*='price'], a[href]"));
 
   for (const element of candidates) {
     if (products.length >= maxProducts) break;
-
-    const link = element.matches("a[href]")
-      ? element as HTMLAnchorElement
-      : element.querySelector<HTMLAnchorElement>("a[href]");
-    const url = link?.href ? absolute(link.href) : undefined;
+    const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
+    const url = link?.href;
     if (!url || seen.has(url)) continue;
 
-    try {
-      if (new URL(url).hostname !== location.hostname) continue;
-    } catch {
-      continue;
-    }
-
-    const text = (element.innerText || link?.innerText || "").replace(/\s+/g, " ").trim();
-    if (text.length < 4) continue;
+    const text = clean(element.innerText || link?.innerText || "");
+    if (text.length < 3) continue;
 
     const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
-    const name = (nameElement?.innerText || link?.innerText || "").replace(/\s+/g, " ").trim();
+    const name = clean(nameElement?.innerText || link?.innerText || "");
     if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
 
-    const image = element.querySelector<HTMLImageElement>("img")?.src;
     const price = priceFrom(text);
     const discountMatch = text.match(/(\d{1,2})\s*%/);
     const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
-    const salesMatch = text.match(/(?:ขายแล้ว|sold)\s*([\d,.]+)\s*([kK]?)/i);
+    const image = element.querySelector<HTMLImageElement>("img")?.src;
 
     seen.add(url);
     products.push({
@@ -173,11 +146,31 @@ async function buildBrowserSearch(query: string, maxProducts: number): Promise<B
       ...(price !== undefined ? { price } : {}),
       ...(discountMatch ? { discount: Number(discountMatch[1]) } : {}),
       ...(ratingMatch ? { rating: Number(ratingMatch[1]) } : {}),
-      ...(salesMatch ? { salesCount: Math.round(Number(salesMatch[1].replace(/,/g, "")) * (salesMatch[2] ? 1000 : 1)) } : {}),
-      url,
       ...(image ? { image } : {}),
+      url,
     });
   }
 
-  return { ...getPageState(), status: products.length ? "ready" : "empty", products };
+  // If the site page exposes no product cards, inspect JSON-LD Product objects.
+  if (!products.length) {
+    for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'))) {
+      try {
+        const value = JSON.parse(script.textContent || "null");
+        const list = Array.isArray(value) ? value : [value];
+        for (const item of list) {
+          if (!item || typeof item !== "object" || String(item["@type"]).toLowerCase() !== "product") continue;
+          const name = typeof item.name === "string" ? clean(item.name) : "";
+          const url = typeof item.url === "string" ? new URL(item.url, location.href).href : location.href;
+          if (!name) continue;
+          const offers = item.offers && typeof item.offers === "object" ? item.offers : undefined;
+          const rawPrice = offers && typeof offers.price !== "undefined" ? String(offers.price) : "";
+          const numericPrice = Number(rawPrice.replace(/,/g, ""));
+          products.push({ name, url, ...(Number.isFinite(numericPrice) ? { price: numericPrice } : {}) });
+          if (products.length >= maxProducts) break;
+        }
+      } catch { /* ignore malformed JSON-LD */ }
+    }
+  }
+
+  return { ...state(), status: products.length ? "ready" : "empty", products };
 }
