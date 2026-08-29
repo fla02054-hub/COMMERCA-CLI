@@ -49,20 +49,15 @@ if (args[0] === "product" && args[1] === "providers") {
 
 if (args[0] === "product" && args[1] === "search") {
   const input = args.slice(2).join(" ").trim();
-  if (!input) {
-    throw new Error("usage: product search <url-or-query>");
-  }
+  if (!input) throw new Error("usage: product search <url-or-query>");
 
-  // URL-first mode: paste ANY HTTP(S) product/search URL directly.
-  // Do not send URLs through the keyword/Rakatookyang search form.
-  // Shopee URLs are opened in the browser and parsed as a product detail.
+  // URL-first: open Rakatookyang, paste the original URL, then read its result.
   if (isUrl(input)) {
-    const product = await readShopeeProductDetail(input);
-    console.log(JSON.stringify([product], null, 2));
+    const { products } = await searchProducts("rakatookyang", input);
+    console.log(JSON.stringify(products, null, 2));
     process.exit(0);
   }
 
-  // Keyword mode remains available when an explicit provider is supplied.
   const providerName = args[2];
   const query = args.slice(3).join(" ").trim();
   if (!providerName || !query) {
