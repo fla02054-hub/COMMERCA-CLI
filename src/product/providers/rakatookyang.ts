@@ -80,36 +80,6 @@ export class RakatookyangProvider implements ProductProvider {
 async function buildBrowserSearch(query: string, maxProducts: number): Promise<BrowserSearchResult> {
   const state = () => ({ url: location.href, title: document.title });
   const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(text.toLowerCase());
-
-  if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
-    return { ...state(), status: "blocked", products: [] };
-  }
-
-  // Rakatookyang is primarily used around Shopee product pages. Support both:
-  // 1) an existing product URL supplied through the browser, and
-  // 2) the site's own search UI when one exists.
-  const shopeeLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="shopee.co.th"]'));
-  const searchInput = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
-    .find((element) => /search|ค้นหา|keyword|query/i.test(`${element.placeholder} ${element.name} ${element.getAttribute("aria-label") ?? ""}`));
-
-  if (searchInput) {
-    searchInput.focus();
-    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(searchInput), "value")?.set;
-    if (setter) setter.call(searchInput, query);
-    else searchInput.value = query;
-    searchInput.dispatchEvent(new Event("input", { bubbles: true }));
-    searchInput.dispatchEvent(new Event("change", { bubbles: true }));
-    const form = searchInput.closest("form");
-    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
-      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => /ค้นหา|search/i.test(button.innerText || button.getAttribute("aria-label") || ""));
-    if (button) button.click();
-    else searchInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 4000));
-  }
-
-  const body = document.body?.innerText ?? "";
-  if (blocked(body)) return { ...state(), status: "blocked", products: [] };
-
   const clean = (value: string) => value.replace(/\s+/g, " ").trim();
   const priceFrom = (value: string): number | undefined => {
     const match = value.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? value.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
@@ -118,19 +88,47 @@ async function buildBrowserSearch(query: string, maxProducts: number): Promise<B
     return Number.isFinite(number) ? number : undefined;
   };
 
+  if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
+    return { ...state(), status: "blocked", products: [] };
+  }
+
+  // Accept any user-supplied URL/query. The site may expose a search box, a
+  // product lookup box, or a normal form. Do not require a specific URL shape.
+  const input = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
+    .find((element) => /search|ค้นหา|keyword|query|url|ลิงก์|link|สินค้า/i.test(
+      `${element.placeholder} ${element.name} ${element.id} ${element.getAttribute("aria-label") ?? ""}`,
+    ));
+
+  if (input) {
+    input.focus();
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+    if (setter) setter.call(input, query);
+    else input.value = query;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const form = input.closest("form");
+    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
+      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => /ค้นหา|search|ตรวจ|เช็ก|check|submit/i.test(button.innerText || button.getAttribute("aria-label") || ""));
+    if (button) button.click();
+    else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 4500));
+  }
+
+  const body = document.body?.innerText ?? "";
+  if (blocked(body)) return { ...state(), status: "blocked", products: [] };
+
   const products: BrowserProduct[] = [];
   const seen = new Set<string>();
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], [class*='price'], a[href]"));
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], a[href]"));
 
   for (const element of candidates) {
     if (products.length >= maxProducts) break;
     const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
     const url = link?.href;
     if (!url || seen.has(url)) continue;
-
     const text = clean(element.innerText || link?.innerText || "");
     if (text.length < 3) continue;
-
     const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
     const name = clean(nameElement?.innerText || link?.innerText || "");
     if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
@@ -139,7 +137,6 @@ async function buildBrowserSearch(query: string, maxProducts: number): Promise<B
     const discountMatch = text.match(/(\d{1,2})\s*%/);
     const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
     const image = element.querySelector<HTMLImageElement>("img")?.src;
-
     seen.add(url);
     products.push({
       name,
@@ -151,7 +148,7 @@ async function buildBrowserSearch(query: string, maxProducts: number): Promise<B
     });
   }
 
-  // If the site page exposes no product cards, inspect JSON-LD Product objects.
+  // Also support pages whose result is exposed through JSON-LD.
   if (!products.length) {
     for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'))) {
       try {
