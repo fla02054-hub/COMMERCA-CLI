@@ -20,6 +20,7 @@ test("COMMERCA workflow completes all 14 stages without external providers", asy
   assert.deepEqual(result.state.stages.map((s) => s.status), WORKFLOW_STAGES.map(() => "completed"));
   assert.deepEqual(result.state.transitionHistory, WORKFLOW_STAGES);
   assert.equal(result.state.currentStage, "decision-learning");
+  assert.ok(result.state.stages.at(-1)?.completedAt);
   for (const type of ["goal", "product-candidate-list", "product-profile", "market-evidence", "product-analysis", "scorecard", "selection", "content-package", "creative-strategy", "production-package", "qc-report", "publication", "performance-report", "decision"]) {
     assert.ok(result.artifacts.some((item) => item.type === type), `missing artifact: ${type}`);
   }
@@ -49,4 +50,17 @@ test("QC failure stops the workflow before publishing", async () => {
   assert.equal(result.state.stages.find((s) => s.stage === "qc")?.status, "failed");
   assert.equal(result.state.stages.find((s) => s.stage === "publishing")?.status, "pending");
   assert.equal(result.state.transitionHistory.at(-1), "qc");
+  assert.equal(result.artifacts.some((item) => item.type === "publication"), false);
+});
+
+test("successful workflow has an explicit terminal state and no transition past stage 14", async () => {
+  const registry = new WorkflowStageRegistry();
+  for (const stage of WORKFLOW_STAGES) registry.register(new FunctionStage(stage, async () => ({
+    artifacts: [{ stage, type: `${stage}-ok`, data: {}, createdAt: new Date().toISOString() }],
+  })));
+  const result = await executeWorkflow(createRuntimeWorkflow("terminal test"), registry);
+  assert.equal(result.state.status, "completed");
+  assert.equal(result.state.currentStage, "decision-learning");
+  assert.deepEqual(result.state.transitionHistory, WORKFLOW_STAGES);
+  assert.equal(result.state.transitionHistory.length, 14);
 });
