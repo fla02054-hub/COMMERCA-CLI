@@ -22,21 +22,36 @@ export class CommercaAgent {
   readonly tools = new AgentToolRuntime();
   private readonly brain: AgentBrain;
   constructor(brain?: AgentBrain) { this.brain = brain ?? (process.env.OPENROUTER_API_KEY ? new OpenRouterBrain() : new RuleBasedBrain()); this.tools.register(browserTool); }
+
   async run(task: AgentTask): Promise<AgentResult> {
     if (!task.goal.trim()) return { status: "needs_input", goal: task.goal, plan: [], report: "A goal is required." };
     const history: AgentAction[] = [{ type: "observe", thought: `Understand the goal: ${task.goal}` }, { type: "plan", thought: "Create a plan dynamically from the goal and observations." }];
+    let lastError = "";
+    let successfulToolUse = false;
     try {
       for (let i = 0; i < 8; i++) {
-        const observation = history.at(-1)?.result;
+        const observation = history.at(-1)?.result ?? (lastError ? { error: lastError } : undefined);
         const decision = await this.brain.decide({ goal: task.goal, observation, history });
         history.push({ type: "decide", thought: decision.reason, result: decision });
-        if (decision.action === "finish") break;
+        if (decision.action === "finish") {
+          if (!successfulToolUse) return { status: "failed", goal: task.goal, plan: history, report: lastError || "Agent finished without accomplishing the goal." };
+          break;
+        }
         if (!decision.tool) throw new Error("Agent selected a tool without a tool name.");
-        try { const result = await this.tools.execute(decision.tool, decision.input); history.push({ type: "use_tool", thought: decision.reason, tool: decision.tool, input: decision.input, result }); history.push({ type: "analyze", thought: "Analyze the tool result before choosing the next action.", result }); }
-        catch (error) { history.push({ type: "analyze", thought: `Tool failed; AI can adapt on the next decision. ${error instanceof Error ? error.message : String(error)}` }); }
+        try {
+          const result = await this.tools.execute(decision.tool, decision.input);
+          successfulToolUse = true;
+          lastError = "";
+          history.push({ type: "use_tool", thought: decision.reason, tool: decision.tool, input: decision.input, result });
+          history.push({ type: "analyze", thought: "Tool succeeded. Analyze the result before choosing the next action.", result });
+        } catch (error) {
+          lastError = error instanceof Error ? error.message : String(error);
+          history.push({ type: "analyze", thought: `Tool failed. Re-plan using this error instead of repeating blindly: ${lastError}`, result: { error: lastError } });
+        }
       }
       history.push({ type: "report", thought: "Summarize completed actions and evidence." });
-      return { status: "completed", goal: task.goal, plan: history, report: "Autonomous run completed." };
+      if (!successfulToolUse) return { status: "failed", goal: task.goal, plan: history, report: lastError || "Goal was not accomplished." };
+      return { status: "completed", goal: task.goal, plan: history, report: "Autonomous run completed with successful tool execution." };
     } catch (error) { return { status: "failed", goal: task.goal, plan: history, report: error instanceof Error ? error.message : String(error) }; }
   }
 }
