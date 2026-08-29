@@ -7,6 +7,7 @@ import {
   readShopeeProductDetail,
   ShopeeBrowserProvider,
 } from "../product/index.js";
+import { parseProductSearchArgs } from "./product-search.js";
 
 const args = process.argv.slice(2);
 
@@ -24,16 +25,6 @@ async function searchProducts(providerName: string, query: string) {
   return { provider, products: await provider.search(query) };
 }
 
-const isUrl = (value?: string) => {
-  try {
-    if (!value) return false;
-    const parsed = new URL(value.trim());
-    return parsed.protocol === "http:" || parsed.protocol === "https:";
-  } catch {
-    return false;
-  }
-};
-
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
   const workflow = await runWorkflow(goal);
@@ -47,30 +38,25 @@ if (args[0] === "product" && args[1] === "providers") {
   process.exit(0);
 }
 
-if (args[0] === "product" && args[1] === "search") {
-  const input = args.slice(2).join(" ").trim();
-  if (!input) throw new Error("usage: product search <query> | product search <provider> <query> | product search <url>");
+if (args[0] === "product" && (args[1] === "search" || args[1] === "open-search")) {
+  const registry = createProductRegistry();
+  const knownProviders = registry.list().map((x) => x.name);
+  const mode = parseProductSearchArgs(args.slice(2), knownProviders);
 
-  // URL mode: product URL is opened directly and inspected; other URLs are searched by RakaTookYang.
-  if (isUrl(input)) {
-    const { products } = await searchProducts("rakatookyang", input);
+  if (mode.mode === "url") {
+    const { products } = await searchProducts("rakatookyang", mode.url);
     console.log(JSON.stringify(products, null, 2));
     process.exit(0);
   }
 
-  // Explicit provider mode: product search <provider> <query>
-  const knownProviders = createProductRegistry().list().map((x) => x.name);
-  const maybeProvider = args[2];
-  if (maybeProvider && knownProviders.includes(maybeProvider)) {
-    const query = args.slice(3).join(" ").trim();
-    if (!query) throw new Error(`usage: product search ${maybeProvider} <query>`);
-    const { products } = await searchProducts(maybeProvider, query);
+  if (mode.mode === "provider") {
+    const { products } = await searchProducts(mode.provider, mode.query);
     console.log(JSON.stringify(products, null, 2));
     process.exit(0);
   }
 
-  // Natural/default mode: product search <query> uses RakaTookYang browser search.
-  const { products } = await searchProducts("rakatookyang", input);
+  // Default search intentionally uses the visible RakaTookYang browser flow.
+  const { products } = await searchProducts("rakatookyang", mode.query);
   console.log(JSON.stringify(products, null, 2));
   process.exit(0);
 }
@@ -119,7 +105,10 @@ console.log("  workflow run <goal>");
 console.log("  product providers");
 console.log("  product search <query>");
 console.log("  product search <provider> <query>");
+console.log("  product search --provider <provider> <query>");
 console.log("  product search <url>");
+console.log("  product search --url <url>");
+console.log("  product open-search <query>");
 console.log("  product inspect <url>");
 console.log("  product audit [url]");
 console.log("  product rank <provider> <query>");
