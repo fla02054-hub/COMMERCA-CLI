@@ -37,33 +37,20 @@ export class RakatookyangProvider implements ProductProvider {
     if (!input) throw new Error("Rakatookyang search requires a URL or query.");
 
     const browser = new BrowserController({ launchIfNeeded: true, headless: false });
-
     try {
       await browser.connect();
       await browser.open(BASE_URL);
-      await browser.wait(3500);
+      await browser.wait(2500);
 
       const result = await browser.evaluate<BrowserSearchResult>(
         `(${buildBrowserSearch.toString()})(${JSON.stringify(input)}, ${MAX_PRODUCTS})`,
       );
 
-      if (!result) {
-        throw new Error("Rakatookyang returned no browser result. The page may still be loading or its script failed.");
-      }
-      if (result.error) {
-        throw new Error(`Rakatookyang browser error: ${result.error} URL: ${result.url ?? BASE_URL}`);
-      }
-      if (result.status === "blocked") {
-        throw new Error(`Rakatookyang blocked browser access. URL: ${result.url ?? BASE_URL}`);
-      }
-      if (!Array.isArray(result.products)) {
-        throw new Error(`Rakatookyang returned an invalid product result. URL: ${result.url ?? BASE_URL}`);
-      }
-      if (result.products.length === 0) {
-        throw new Error(
-          `Rakatookyang returned 0 products. URL: ${result.url ?? BASE_URL} Title: ${result.title ?? "unknown"}`,
-        );
-      }
+      if (!result) throw new Error("Rakatookyang returned no browser result.");
+      if (result.error) throw new Error(`Rakatookyang browser error: ${result.error} URL: ${result.url ?? BASE_URL}`);
+      if (result.status === "blocked") throw new Error(`Rakatookyang blocked browser access. URL: ${result.url ?? BASE_URL}`);
+      if (!Array.isArray(result.products)) throw new Error(`Rakatookyang returned an invalid product result. URL: ${result.url ?? BASE_URL}`);
+      if (!result.products.length) throw new Error(`Rakatookyang returned 0 products. URL: ${result.url ?? BASE_URL} Title: ${result.title ?? "unknown"}`);
 
       return result.products.map((item, index) => ({
         id: `rakatookyang-${index + 1}`,
@@ -90,115 +77,104 @@ export class RakatookyangProvider implements ProductProvider {
 
 async function buildBrowserSearch(query: string, maxProducts: number): Promise<BrowserSearchResult> {
   const state = () => ({ url: location.href, title: document.title });
-  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/i.test(text);
-  const clean = (value: string) => value.replace(/\s+/g, " ").trim();
-  const priceFrom = (value: string): number | undefined => {
-    const match = value.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? value.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
-    if (!match) return undefined;
-    const number = Number(match[1].replace(/,/g, ""));
-    return Number.isFinite(number) ? number : undefined;
+  const clean = (v: string) => v.replace(/\s+/g, " ").trim();
+  const blocked = (v: string) => /captcha|access denied|too many requests|cloudflare|verify you are human/i.test(v);
+  const priceFrom = (v: string): number | undefined => {
+    const m = v.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? v.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
+    if (!m) return undefined;
+    const n = Number(m[1].replace(/,/g, ""));
+    return Number.isFinite(n) ? n : undefined;
   };
 
   try {
-    if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
-      return { ...state(), status: "blocked", products: [] };
+    if (blocked(`${document.title} ${document.body?.innerText ?? ""}`)) return { ...state(), status: "blocked", products: [] };
+
+    const visible = (el: HTMLElement) => {
+      const s = getComputedStyle(el);
+      const r = el.getBoundingClientRect();
+      return s.display !== "none" && s.visibility !== "hidden" && r.width > 0 && r.height > 0;
+    };
+
+    const fields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
+      .filter(visible)
+      .filter((el) => !["hidden", "submit", "button", "checkbox", "radio"].includes(el.type));
+
+    const score = (el: HTMLInputElement | HTMLTextAreaElement) => {
+      const text = `${el.placeholder} ${el.name} ${el.id} ${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("type") ?? ""}`.toLowerCase();
+      let n = 0;
+      if (/url|link|ลิงก์|สินค้า|product/.test(text)) n += 10;
+      if (/search|ค้นหา|keyword|query/.test(text)) n += 8;
+      if (el.tagName === "TEXTAREA") n += 2;
+      if (el.type === "text" || el.type === "url" || el.type === "search") n += 3;
+      return n;
+    };
+
+    const field = [...fields].sort((a, b) => score(b) - score(a))[0];
+    if (!field) return { ...state(), status: "empty", products: [], error: "Rakatookyang search input was not found." };
+
+    field.focus();
+    field.select?.();
+    const proto = Object.getPrototypeOf(field);
+    const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+    if (setter) setter.call(field, query);
+    else field.value = query;
+    field.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: query }));
+    field.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const form = field.closest("form");
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button, input[type='submit']")).filter(visible);
+    const button = buttons.sort((a, b) => {
+      const aText = `${a.innerText} ${a.getAttribute("aria-label") ?? ""} ${a.getAttribute("title") ?? ""}`;
+      const bText = `${b.innerText} ${b.getAttribute("aria-label") ?? ""} ${b.getAttribute("title") ?? ""}`;
+      const s = (v: string) => /ค้นหา|เช็กราคา|เช็คราคา|ตรวจราคา|search|check|price|submit/i.test(v) ? 10 : 0;
+      return s(bText) - s(aText);
+    })[0];
+
+    if (button) button.click();
+    else if (form) {
+      if (typeof form.requestSubmit === "function") form.requestSubmit();
+      else form.submit();
+    } else {
+      field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+      field.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
     }
 
-    const fields = Array.from(
-      document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLElement>(
-        "input, textarea, [contenteditable='true']",
-      ),
-    );
-    const field = fields.find((element) =>
-      /search|ค้นหา|keyword|query|url|ลิงก์|link|สินค้า|product/i.test(
-        `${element.getAttribute("placeholder") ?? ""} ${element.getAttribute("name") ?? ""} ${element.id} ${element.getAttribute("aria-label") ?? ""}`,
-      ),
-    ) ?? fields.find((element) => {
-      const type = element instanceof HTMLInputElement ? element.type : "";
-      return !["hidden", "submit", "button"].includes(type);
-    });
-
-    if (field) {
-      field.focus();
-      if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
-        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
-        if (setter) setter.call(field, query);
-        else field.value = query;
-      } else {
-        field.textContent = query;
-      }
-      field.dispatchEvent(new Event("input", { bubbles: true }));
-      field.dispatchEvent(new Event("change", { bubbles: true }));
-
-      const form = field.closest("form");
-      const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
-        Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-          .find((button) => /ค้นหา|เช็กราคา|เช็ค|ตรวจ|เช็ก|search|check|submit|price/i.test(button.innerText || button.getAttribute("aria-label") || ""));
-
-      if (button) button.click();
-      else if (form) form.requestSubmit();
-      else field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-
-      const startedAt = Date.now();
-      while (Date.now() - startedAt < 10000) {
-        await new Promise((resolve) => setTimeout(resolve, 500));
-        const body = document.body?.innerText ?? "";
-        if (blocked(body)) return { ...state(), status: "blocked", products: [] };
-        if (/(฿|บาท|THB)\s*[\d,]+/i.test(body) || (location.href !== "https://rakatookyang.com/" && location.href !== "https://rakatookyang.com")) break;
-      }
+    const started = Date.now();
+    let lastBody = "";
+    while (Date.now() - started < 15000) {
+      await new Promise((r) => setTimeout(r, 500));
+      lastBody = document.body?.innerText ?? "";
+      if (blocked(`${document.title} ${lastBody}`)) return { ...state(), status: "blocked", products: [] };
+      const hasPrice = /(?:฿|THB|บาท)\s*[\d,]+|[\d,]+\s*(?:บาท|THB)/i.test(lastBody);
+      const hasResult = /ประวัติราคา|ราคาต่ำสุด|ราคาเฉลี่ย|price history|lowest price|average price/i.test(lastBody);
+      if (hasPrice || hasResult) break;
     }
-
-    const body = document.body?.innerText ?? "";
-    if (blocked(body)) return { ...state(), status: "blocked", products: [] };
 
     const products: BrowserProduct[] = [];
     const seen = new Set<string>();
-    const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], a[href]"));
-
-    for (const element of candidates) {
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], a[href]"));
+    for (const node of nodes) {
       if (products.length >= maxProducts) break;
-      const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
-      const url = link?.href;
-      if (!url || seen.has(url)) continue;
-      const text = clean(element.innerText || link?.innerText || "");
+      const link = node.matches("a[href]") ? node as HTMLAnchorElement : node.querySelector<HTMLAnchorElement>("a[href]");
+      const url = link?.href ?? location.href;
+      if (seen.has(url)) continue;
+      const text = clean(node.innerText || link?.innerText || "");
       if (text.length < 3) continue;
-      const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
-      const name = clean(nameElement?.innerText || link?.innerText || "");
+      const title = clean(node.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']")?.innerText || link?.innerText || "");
+      const name = title.length >= 3 ? title : clean(text.split(/(?:฿|THB|บาท)/i)[0]);
       if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
-
       const price = priceFrom(text);
-      const discountMatch = text.match(/(\d{1,2})\s*%/);
-      const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
-      const image = element.querySelector<HTMLImageElement>("img")?.src;
+      const discount = text.match(/(\d{1,2})\s*%/);
+      const rating = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
+      const image = node.querySelector<HTMLImageElement>("img")?.src;
       seen.add(url);
-      products.push({
-        name,
-        ...(price !== undefined ? { price } : {}),
-        ...(discountMatch ? { discount: Number(discountMatch[1]) } : {}),
-        ...(ratingMatch ? { rating: Number(ratingMatch[1]) } : {}),
-        ...(image ? { image } : {}),
-        url,
-      });
+      products.push({ name, url, ...(price !== undefined ? { price } : {}), ...(discount ? { discount: Number(discount[1]) } : {}), ...(rating ? { rating: Number(rating[1]) } : {}), ...(image ? { image } : {}) });
     }
 
     if (!products.length) {
-      for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'))) {
-        try {
-          const value = JSON.parse(script.textContent || "null");
-          const list = Array.isArray(value) ? value : [value];
-          for (const item of list) {
-            if (!item || typeof item !== "object" || String(item["@type"]).toLowerCase() !== "product") continue;
-            const name = typeof item.name === "string" ? clean(item.name) : "";
-            const url = typeof item.url === "string" ? new URL(item.url, location.href).href : location.href;
-            if (!name) continue;
-            const offers = item.offers && typeof item.offers === "object" ? item.offers : undefined;
-            const rawPrice = offers && typeof offers.price !== "undefined" ? String(offers.price) : "";
-            const numericPrice = Number(rawPrice.replace(/,/g, ""));
-            products.push({ name, url, ...(Number.isFinite(numericPrice) ? { price: numericPrice } : {}) });
-            if (products.length >= maxProducts) break;
-          }
-        } catch { /* ignore malformed JSON-LD */ }
-      }
+      const title = clean(document.querySelector("h1,h2,h3")?.textContent ?? "");
+      const price = priceFrom(lastBody);
+      if (title && price !== undefined) products.push({ name: title, price, url: location.href });
     }
 
     return { ...state(), status: products.length ? "ready" : "empty", products };
