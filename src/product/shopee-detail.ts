@@ -15,16 +15,13 @@ export interface ShopeeProductDetail extends Product {
   image?: string;
 }
 
-export async function readShopeeProductDetail(
-  url: string,
-  options: { browserPort?: number; waitMs?: number } = {},
-): Promise<ShopeeProductDetail> {
+export async function readShopeeProductDetail(url: string, options: { browserPort?: number; waitMs?: number } = {}): Promise<ShopeeProductDetail> {
   const browser = new BrowserController({ port: options.browserPort ?? 9222 });
   try {
     await browser.open(url);
-    await browser.wait(options.waitMs ?? 3000);
+    await browser.wait(options.waitMs ?? 8000);
 
-    const data = await browser.evaluate<Record<string, unknown>>(`(() => {
+    const extract = () => browser.evaluate<Record<string, unknown>>(`(() => {
       const clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();
       const text = (node) => clean(node?.textContent || node?.innerText || '');
       const attr = (selector, name) => document.querySelector(selector)?.getAttribute(name) || '';
@@ -32,10 +29,10 @@ export async function readShopeeProductDetail(
         if (value === undefined || value === null || value === '') return undefined;
         const match = String(value).replace(/,/g, '').match(/([0-9]+(?:\\.[0-9]+)?)([KkMm])?/);
         if (!match) return undefined;
-        let number = Number(match[1]);
-        if (match[2]?.toLowerCase() === 'k') number *= 1000;
-        if (match[2]?.toLowerCase() === 'm') number *= 1000000;
-        return Number.isFinite(number) ? number : undefined;
+        let n = Number(match[1]);
+        if (match[2]?.toLowerCase() === 'k') n *= 1000;
+        if (match[2]?.toLowerCase() === 'm') n *= 1000000;
+        return Number.isFinite(n) ? n : undefined;
       };
       const lines = (document.body?.innerText || '').split('\\n').map(clean).filter(Boolean);
       const jsonValues = [...document.querySelectorAll('script[type="application/ld+json"]')]
@@ -44,81 +41,43 @@ export async function readShopeeProductDetail(
       const product = jsonValues.find((value) => value && typeof value === 'object' && value['@type'] === 'Product');
       const offers = product?.offers && typeof product.offers === 'object' ? product.offers : undefined;
       const aggregate = product?.aggregateRating && typeof product.aggregateRating === 'object' ? product.aggregateRating : undefined;
-
-      const title = clean(product?.name)
-        || attr('meta[property="og:title"]', 'content')
-        || document.title.replace(/\\s*\\|\\s*Shopee.*$/i, '');
+      const metaTitle = attr('meta[property="og:title"]', 'content');
+      const pageTitle = document.title || '';
+      const title = clean(product?.name) || (metaTitle && !/^Shopee Thailand\\s*\\|/i.test(metaTitle) ? metaTitle : '') || (!/^Shopee Thailand\\s*\\|/i.test(pageTitle) ? pageTitle.replace(/\\s*\\|\\s*Shopee.*$/i, '') : '');
       const image = attr('meta[property="og:image"]', 'content') || undefined;
-
-      // Prefer structured product price. Never scan the whole page first because Shopee
-      // renders unrelated recommendation prices and navigation text in the same document.
       let price = parseNumber(offers?.price);
-      if (price === undefined) {
-        const priceNode = document.querySelector('[data-sqe="price"], [class*="product-price"], [class*="ProductPrice"]');
-        price = parseNumber(text(priceNode));
-      }
+      if (price === undefined) price = parseNumber(text(document.querySelector('[data-sqe="price"], [class*="product-price"], [class*="ProductPrice"]')));
       let originalPrice = parseNumber(product?.priceSpecification?.price);
-      if (originalPrice === undefined) {
-        const oldPriceNode = document.querySelector('del, s, [class*="price--old"], [class*="Price--old"]');
-        originalPrice = parseNumber(text(oldPriceNode));
-      }
+      if (originalPrice === undefined) originalPrice = parseNumber(text(document.querySelector('del, s, [class*="price--old"], [class*="Price--old"]')));
       if (originalPrice !== undefined && price !== undefined && originalPrice <= price) originalPrice = undefined;
-
-      const rating = parseNumber(aggregate?.ratingValue)
-        ?? parseNumber(attr('[itemprop="ratingValue"]', 'content'));
-      const reviewCount = parseNumber(aggregate?.reviewCount)
-        ?? parseNumber(aggregate?.ratingCount)
-        ?? parseNumber(attr('[itemprop="reviewCount"]', 'content'));
-
+      const rating = parseNumber(aggregate?.ratingValue) ?? parseNumber(attr('[itemprop="ratingValue"]', 'content'));
+      const reviewCount = parseNumber(aggregate?.reviewCount) ?? parseNumber(aggregate?.ratingCount) ?? parseNumber(attr('[itemprop="reviewCount"]', 'content'));
       const soldLine = lines.find((line) => /(?:ขายแล้ว|sold)/i.test(line));
       const salesCount = parseNumber(soldLine?.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\\s*[KkMm]?)/i)?.[1]);
-
-      // Only accept a short shop-name node. Never use a generic /shop/ link because
-      // Shopee's header contains many unrelated links and recommendation text.
-      const sellerSelectors = [
-        '[data-sqe="shop-name"]',
-        '[data-testid="shop-name"]',
-        '[class*="shop-name"]',
-        '[class*="ShopName"]',
-        '[class*="shopName"]',
-      ];
       let seller = '';
-      for (const selector of sellerSelectors) {
+      for (const selector of ['[data-sqe="shop-name"]','[data-testid="shop-name"]','[class*="shop-name"]','[class*="ShopName"]','[class*="shopName"]']) {
         const value = text(document.querySelector(selector));
-        if (value && value.length <= 120 && !/seller centre|เปิดร้านค้า|ติดตามเราบน|ช่วยเหลือ|shopping cart/i.test(value)) {
-          seller = value;
-          break;
-        }
+        if (value && value.length <= 120 && !/seller centre|เปิดร้านค้า|ติดตามเราบน|ช่วยเหลือ|shopping cart/i.test(value)) { seller = value; break; }
       }
-
       const body = clean(document.body?.innerText || '');
-      const discount = (() => {
-        const match = body.match(/(?:ลด|discount|off)\\s*([0-9]{1,3})%/i) || body.match(/([0-9]{1,3})%\\s*(?:ลด|off)/i);
-        return match ? Number(match[1]) : undefined;
-      })();
+      const discountMatch = body.match(/(?:ลด|discount|off)\\s*([0-9]{1,3})%/i) || body.match(/([0-9]{1,3})%\\s*(?:ลด|off)/i);
+      const discount = discountMatch ? Number(discountMatch[1]) : undefined;
       const promotions = lines.filter((line) => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(line) && line.length <= 200);
-
-      return {
-        name: title,
-        price,
-        originalPrice,
-        discount,
-        seller: seller || undefined,
-        rating,
-        reviewCount,
-        salesCount,
-        promotion: promotions.join(' | ') || undefined,
-        coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined,
-        voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined,
-        mall: /Shopee Mall/i.test(body),
-        image,
-      };
+      const isProductPage = Boolean(product?.name) || Boolean(price) || Boolean(document.querySelector('[data-sqe="price"], [class*="product-price"], [class*="ProductPrice"]'));
+      return { name: title || undefined, price, originalPrice, discount, seller: seller || undefined, rating, reviewCount, salesCount, promotion: promotions.join(' | ') || undefined, coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined, voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined, mall: /Shopee Mall/i.test(body), image, isProductPage };
     })()`);
+
+    let data = await extract();
+    if (!data.isProductPage || !data.name) {
+      await browser.open(url);
+      await browser.wait(7000);
+      data = await extract();
+    }
+    if (!data.name || !data.isProductPage) throw new Error("Shopee link did not resolve to a product page. Please retry the same product link.");
 
     return {
       id: `shopee-${Date.now()}`,
-      name: String(data.name || 'Shopee product'),
-      url,
+      name: String(data.name), url,
       price: typeof data.price === 'number' ? data.price : undefined,
       originalPrice: typeof data.originalPrice === 'number' ? data.originalPrice : undefined,
       discount: typeof data.discount === 'number' ? data.discount : undefined,
@@ -131,10 +90,7 @@ export async function readShopeeProductDetail(
       voucher: typeof data.voucher === 'string' ? data.voucher : undefined,
       mall: data.mall === true,
       image: typeof data.image === 'string' ? data.image : undefined,
-      source: 'shopee-browser',
-      discoveredAt: new Date().toISOString(),
+      source: 'shopee-browser', discoveredAt: new Date().toISOString(),
     };
-  } finally {
-    browser.close();
-  }
+  } finally { browser.close(); }
 }
