@@ -5,18 +5,24 @@ import type { ProductProvider } from "./provider.js";
 const BASE_URL = "https://rakatookyang.com/";
 const MAX_PRODUCTS = 50;
 
-interface BrowserProduct {
+interface ExtractedProduct {
   title: string;
   url: string;
   price?: number;
+  originalPrice?: number;
 }
+
+const toNumber = (value: string): number | undefined => {
+  const match = value.replace(/,/g, "").match(/(?:฿|บาท|THB)\s*(\d+(?:\.\d+)?)/i);
+  return match ? Number(match[1]) : undefined;
+};
 
 export class RakatookyangProvider implements ProductProvider {
   readonly name = "rakatookyang";
 
   async search(query: string): Promise<Product[]> {
-    const input = query.trim();
-    if (!input) throw new Error("Rakatookyang search requires a URL or query.");
+    const productUrl = query.trim();
+    if (!productUrl) throw new Error("usage: product search <url>");
 
     let browser: Browser | undefined;
     try {
@@ -25,70 +31,117 @@ export class RakatookyangProvider implements ProductProvider {
       const page = await context.newPage();
 
       await page.goto(BASE_URL, { waitUntil: "domcontentloaded", timeout: 30000 });
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
-      await page.waitForTimeout(1500);
+      await page.waitForTimeout(1000);
 
-      const result = await page.evaluate((query) => {
-        const fields = Array.from(
-          document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"),
-        ).filter((el) => {
-          const type = el instanceof HTMLInputElement ? el.type : "";
-          return type !== "hidden" && type !== "submit" && type !== "button" && type !== "checkbox" && type !== "radio";
-        });
+      const inputInfo = await page.evaluate(() => {
+        const fields = [...document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea")]
+          .filter((el) => {
+            const type = el instanceof HTMLInputElement ? el.type.toLowerCase() : "";
+            return !["hidden", "submit", "button", "checkbox", "radio", "file"].includes(type);
+          });
 
         const score = (el: HTMLInputElement | HTMLTextAreaElement) => {
-          const meta = `${el.placeholder ?? ""} ${el.name ?? ""} ${el.id ?? ""} ${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("type") ?? ""}`.toLowerCase();
-          let value = 0;
-          if (/url|link|ลิงก์|สินค้า|product/.test(meta)) value += 10;
-          if (/search|ค้นหา|keyword|query|price|ราคา/.test(meta)) value += 8;
-          if (/text|url|search/.test(meta)) value += 3;
-          return value;
+          const meta = [el.placeholder, el.name, el.id, el.getAttribute("aria-label"), el.getAttribute("type")]
+            .filter(Boolean).join(" ").toLowerCase();
+          let score = 0;
+          if (/url|link|ลิงก์|สินค้า|product/.test(meta)) score += 20;
+          if (/search|ค้นหา|keyword|query/.test(meta)) score += 10;
+          return score;
         };
 
-        const input = [...fields].sort((a, b) => score(b) - score(a))[0];
-        if (!input) return { ok: false, error: "Rakatookyang search input was not found." };
+        const input = fields.sort((a, b) => score(b) - score(a))[0];
+        if (!input) return { found: false };
 
-        input.focus();
-        input.value = query;
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-        input.dispatchEvent(new Event("change", { bubbles: true }));
-
-        const form = input.closest("form");
-        if (form) {
-          if (typeof form.requestSubmit === "function") form.requestSubmit();
-          else form.submit();
-        } else {
-          input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-          input.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", bubbles: true }));
-        }
-
-        return { ok: true };
-      }, input);
-
-      if (!result.ok) throw new Error(result.error);
-
-      await page.waitForTimeout(3000);
-      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
-
-      const products = await page.evaluate(() => {
-        return [...document.querySelectorAll("a")].map((a) => ({
-          title: a.textContent?.trim() ?? "",
-          url: (a as HTMLAnchorElement).href,
-        })).filter((item) => item.title && item.url);
+        return {
+          found: true,
+          selector: input.tagName.toLowerCase() === "textarea" ? "textarea" : "input",
+        };
       });
 
-      const usable = products.slice(0, MAX_PRODUCTS);
-      if (!usable.length) {
-        throw new Error(`Rakatookyang returned no products. URL: ${page.url()}`);
+      if (!inputInfo.found) {
+        throw new Error(`Rakatookyang search input not found. Page: ${page.url()}`);
       }
 
-      return usable.map((item, index) => ({
-        id: `rakatookyang-${Date.now()}-${index + 1}`,
-        name: item.title,
-        ...(item.url ? { url: item.url } : {}),
+      const input = page.locator(inputInfo.selector).first();
+      await input.fill(productUrl);
+
+      const form = input.locator("xpath=ancestor::form[1]");
+      if (await form.count()) {
+        const button = form.getByRole("button").first();
+        if (await button.count()) await button.click();
+        else await input.press("Enter");
+      } else {
+        const buttons = page.getByRole("button");
+        if (await buttons.count()) {
+          await buttons.first().click();
+        } else {
+          await input.press("Enter");
+        }
+      }
+
+      await page.waitForTimeout(2500);
+      await page.waitForLoadState("networkidle", { timeout: 15000 }).catch(() => undefined);
+      await page.waitForTimeout(1000);
+
+      const extracted = await page.evaluate(() => {
+        const clean = (value: string | null | undefined) => (value ?? "").replace(/\s+/g, " ").trim();
+        const links = [...document.querySelectorAll<HTMLAnchorElement>("a[href]")];
+        const items: ExtractedProduct[] = [];
+
+        for (const link of links) {
+          const title = clean(link.textContent);
+          const url = link.href;
+          if (!title || !url || url === location.href) continue;
+          if (url.startsWith("javascript:") || url.startsWith("mailto:")) continue;
+          items.push({ title, url });
+        }
+
+        const body = clean(document.body?.innerText);
+        const prices = [...body.matchAll(/(?:฿|บาท|THB)\s*([\d,]+(?:\.\d+)?)/gi)]
+          .map((match) => Number(match[1].replace(/,/g, "")))
+          .filter(Number.isFinite);
+
+        return {
+          url: location.href,
+          title: clean(document.title),
+          body,
+          products: items,
+          prices,
+        };
+      });
+
+      const unique = new Map<string, ExtractedProduct>();
+      for (const item of extracted.products) {
+        if (!unique.has(item.url)) unique.set(item.url, item);
+      }
+
+      const usable = [...unique.values()].slice(0, MAX_PRODUCTS);
+      if (usable.length) {
+        return usable.map((item, index) => ({
+          id: `rakatookyang-${Date.now()}-${index + 1}`,
+          name: item.title,
+          url: item.url,
+          price: item.price,
+          originalPrice: item.originalPrice,
+          source: "rakatookyang",
+          discoveredAt: new Date().toISOString(),
+        }));
+      }
+
+      const fallbackName = extracted.title && !/rakatookyang/i.test(extracted.title)
+        ? extracted.title
+        : "Rakatookyang price result";
+      const price = extracted.prices[0];
+
+      return [{
+        id: `rakatookyang-${Date.now()}`,
+        name: fallbackName,
+        url: productUrl,
+        ...(price !== undefined ? { price } : {}),
+        promotion: extracted.body.slice(0, 2000),
         source: "rakatookyang",
         discoveredAt: new Date().toISOString(),
-      }));
+      }];
     } finally {
       await browser?.close().catch(() => undefined);
     }
