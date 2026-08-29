@@ -24,7 +24,15 @@ async function searchProducts(providerName: string, query: string) {
   return { provider, products: await provider.search(query) };
 }
 
-const isUrl = (value?: string) => /^https?:\/\//i.test(value ?? "");
+const isUrl = (value?: string) => {
+  try {
+    if (!value) return false;
+    const parsed = new URL(value.trim());
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+};
 
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
@@ -40,22 +48,26 @@ if (args[0] === "product" && args[1] === "providers") {
 }
 
 if (args[0] === "product" && args[1] === "search") {
-  const first = args[2];
-  const directQuery = args.slice(2).join(" ");
+  const input = args.slice(2).join(" ").trim();
+  if (!input) {
+    throw new Error("usage: product search <url-or-query>");
+  }
 
-  // URL-first mode: paste a URL and COMMERCA automatically uses Rakatookyang.
-  if (isUrl(first)) {
-    const { products } = await searchProducts("rakatookyang", directQuery);
-    console.log(JSON.stringify(products, null, 2));
+  // URL-first mode: paste ANY HTTP(S) product/search URL directly.
+  // Do not send URLs through the keyword/Rakatookyang search form.
+  // Shopee URLs are opened in the browser and parsed as a product detail.
+  if (isUrl(input)) {
+    const product = await readShopeeProductDetail(input);
+    console.log(JSON.stringify([product], null, 2));
     process.exit(0);
   }
 
-  // Keep the explicit provider form for keyword searches.
-  const providerName = first;
-  const query = args.slice(3).join(" ");
+  // Keyword mode remains available when an explicit provider is supplied.
+  const providerName = args[2];
+  const query = args.slice(3).join(" ").trim();
   if (!providerName || !query) {
     throw new Error(
-      "usage: product search <url-or-provider> <query>\n" +
+      "usage: product search <url-or-query>\n" +
       "URL mode: product search <url>\n" +
       "Provider mode: product search <provider> <query>",
     );
@@ -91,7 +103,7 @@ if (args[0] === "product" && args[1] === "price-history") {
 console.log("COMMERCA-CLI");
 console.log("  workflow run <goal>");
 console.log("  product providers");
-console.log("  product search <url>");
+console.log("  product search <url-or-query>");
 console.log("  product search <provider> <query>");
 console.log("  product rank <provider> <query>");
 console.log("  product detail <url>");
