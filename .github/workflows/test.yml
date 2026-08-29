@@ -21,5 +21,5 @@ jobs:
       - name: Gemini real API integration test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-2.5-flash-lite
+          GEMINI_MODEL: gemini-3.5-flash-lite
         run: node --import tsx --test test/gemini.integration.test.ts
