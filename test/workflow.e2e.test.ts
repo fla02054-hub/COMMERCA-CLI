@@ -13,28 +13,41 @@ const fixtureProduct: Product = {
   discoveredAt: new Date().toISOString(),
 };
 
-test("COMMERCA workflow runs 01 → 14 end-to-end without external providers", async () => {
-  const workflow = createRuntimeWorkflow("find a high-potential product");
-  const result = await executeWorkflow(workflow, createStageRegistry({ discoverProducts: async () => [fixtureProduct] }));
+test("COMMERCA workflow completes all 14 stages without external providers", async () => {
+  const result = await executeWorkflow(
+    createRuntimeWorkflow("find a high-potential product"),
+    createStageRegistry({ discoverProducts: async () => [fixtureProduct] }),
+  );
+  assert.equal(result.state.status, "completed");
   assert.equal(result.state.stages.length, 14);
-  assert.deepEqual(result.state.stages.map((stage) => stage.status), WORKFLOW_STAGES.map(() => "completed"));
+  assert.deepEqual(result.state.stages.map((s) => s.status), WORKFLOW_STAGES.map(() => "completed"));
   assert.deepEqual(result.state.transitionHistory, WORKFLOW_STAGES);
   assert.equal(result.state.currentStage, "decision-learning");
-  for (const type of ["product-candidate-list", "product-profile", "market-evidence", "product-analysis", "scorecard", "selection", "content-package", "creative-strategy", "production-package", "qc-report", "publication", "performance-report", "decision"]) {
+  for (const type of ["goal", "product-candidate-list", "product-profile", "market-evidence", "product-analysis", "scorecard", "selection", "content-package", "creative-strategy", "production-package", "qc-report", "publication", "performance-report", "decision"]) {
     assert.ok(result.artifacts.some((item) => item.type === type), `missing artifact: ${type}`);
   }
 });
 
-test("runtime retries a failed stage and then marks it failed", async () => {
+test("runtime retries a failed stage and marks the workflow failed", async () => {
   const registry = new WorkflowStageRegistry();
-  for (const stage of WORKFLOW_STAGES) {
-    registry.register(new FunctionStage(stage, async () => {
-      if (stage === "product-discovery") throw new Error("fixture failure");
-      return { artifacts: [{ stage, type: `${stage}-ok`, data: {}, createdAt: new Date().toISOString() }] };
-    }));
-  }
+  for (const stage of WORKFLOW_STAGES) registry.register(new FunctionStage(stage, async () => {
+    if (stage === "product-discovery") throw new Error("fixture failure");
+    return { artifacts: [{ stage, type: `${stage}-ok`, data: {}, createdAt: new Date().toISOString() }] };
+  }));
   const result = await executeWorkflow(createRuntimeWorkflow("retry test"), registry);
-  const failed = result.state.stages.find((stage) => stage.stage === "product-discovery");
+  const failed = result.state.stages.find((s) => s.stage === "product-discovery");
+  assert.equal(result.state.status, "failed");
   assert.equal(failed?.status, "failed");
   assert.equal(failed?.attempts, 2);
+});
+
+test("publishing is blocked when QC fails", async () => {
+  const registry = new WorkflowStageRegistry();
+  for (const stage of WORKFLOW_STAGES) registry.register(new FunctionStage(stage, async () => {
+    if (stage === "qc") return { artifacts: [{ stage, type: "qc-report", data: { passed: false, issues: ["fixture"] }, createdAt: new Date().toISOString() }] };
+    return { artifacts: [{ stage, type: `${stage}-ok`, data: {}, createdAt: new Date().toISOString() }] };
+  }));
+  const result = await executeWorkflow(createRuntimeWorkflow("qc gate test"), registry);
+  assert.equal(result.state.status, "failed");
+  assert.equal(result.state.stages.find((s) => s.stage === "publishing")?.status, "failed");
 });
