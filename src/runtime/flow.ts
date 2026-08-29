@@ -3,95 +3,58 @@ import type { WorkflowArtifact } from "./workflow-schema.js";
 import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
-export interface RuntimeWorkflow {
-  id: string;
-  goal: string;
-  state: WorkflowBlueprint;
-  artifacts: WorkflowArtifact[];
-}
+export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: ["product-discovery"],
-  "product-discovery": ["product-research"],
-  "product-research": ["market-research"],
-  "market-research": ["product-analysis"],
-  "product-analysis": ["product-scoring"],
-  "product-scoring": ["product-selection"],
-  "product-selection": ["content-strategy"],
-  "content-strategy": ["creative-strategy"],
-  "creative-strategy": ["production"],
-  production: ["qc"],
-  qc: ["publishing", "creative-strategy", "production", "content-strategy"],
-  publishing: ["performance"],
-  performance: ["decision-learning"],
-  "decision-learning": ["product-research", "content-strategy"],
+  goal: ["product-discovery"], "product-discovery": ["product-research"], "product-research": ["market-research"],
+  "market-research": ["product-analysis"], "product-analysis": ["product-scoring"], "product-scoring": ["product-selection"],
+  "product-selection": ["content-strategy"], "content-strategy": ["creative-strategy"], "creative-strategy": ["production"],
+  production: ["qc"], qc: ["publishing", "creative-strategy", "production", "content-strategy"], publishing: ["performance"],
+  performance: ["decision-learning"], "decision-learning": ["product-research", "content-strategy"],
 };
 
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
   if (!goal.trim()) throw new Error("Workflow goal is required.");
   return { id, goal: goal.trim(), state: createWorkflowBlueprint(), artifacts: [] };
 }
-
-function transitionAllowed(from: WorkflowStage, to: WorkflowStage): boolean {
-  return ALLOWED_TRANSITIONS[from].includes(to);
-}
-
+function transitionAllowed(from: WorkflowStage, to: WorkflowStage): boolean { return ALLOWED_TRANSITIONS[from].includes(to); }
 function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void {
   const fromIndex = STAGE_ORDER[from];
-  for (const state of workflow.state.stages) {
-    if (STAGE_ORDER[state.stage] >= fromIndex) {
-      state.status = "pending";
-      state.startedAt = undefined;
-      state.completedAt = undefined;
-      state.error = undefined;
-    }
+  for (const state of workflow.state.stages) if (STAGE_ORDER[state.stage] >= fromIndex) {
+    state.status = "pending"; delete state.startedAt; delete state.completedAt; delete state.error;
   }
 }
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
-  let stage: WorkflowStage = workflow.state.currentStage;
+  let stage = workflow.state.currentStage;
   let guard = 0;
-
   while (guard++ < 100) {
     const state = workflow.state.stages[STAGE_ORDER[stage] - 1];
+    if (!state) throw new Error(`Missing workflow state for stage: ${stage}`);
     if (state.status === "completed" || state.status === "skipped") {
       const next = WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) return workflow;
-      stage = next;
-      continue;
+      stage = next; continue;
     }
-
     workflow.state.currentStage = stage;
     workflow.state.transitionHistory.push(stage);
-    state.status = "running";
-    state.attempts += 1;
-    state.startedAt = new Date().toISOString();
-
+    state.status = "running"; state.attempts += 1; state.startedAt = new Date().toISOString();
     try {
       const context: StageContext = { workflowId: workflow.id, goal: workflow.goal, stage, artifacts: workflow.artifacts };
       const result = await registry.get(stage).execute(context);
       workflow.artifacts.push(...result.artifacts);
       state.artifactTypes.push(...result.artifacts.map((item) => item.type));
-      state.status = "completed";
-      state.completedAt = new Date().toISOString();
-      state.error = undefined;
-
+      state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) return workflow;
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
-
       if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next);
       stage = next;
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
-      if (state.attempts < workflow.state.maxAttemptsPerStage) {
-        state.status = "pending";
-        continue;
-      }
-      state.status = "failed";
-      return workflow;
+      if (state.attempts < workflow.state.maxAttemptsPerStage) { state.status = "pending"; continue; }
+      state.status = "failed"; return workflow;
     }
   }
-
   throw new Error("Workflow transition guard exceeded 100 iterations.");
 }
