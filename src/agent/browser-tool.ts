@@ -3,55 +3,21 @@ import type { Tool } from "./tool-runtime.js";
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 const execFileAsync = promisify(execFile);
-export type BrowserObservation = { url: string; title: string; text: string };
-function chromeCandidates() { return [process.env.PROGRAMFILES ? `${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe` : "", process.env["PROGRAMFILES(X86)"] ? `${process.env["PROGRAMFILES(X86)"]}\\Google\\Chrome\\Application\\chrome.exe` : "", process.env.LOCALAPPDATA ? `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe` : ""].filter(Boolean); }
+export type BrowserObservation = { url:string; title:string; text:string; controls:Array<{tag:string;role:string;name:string;placeholder:string;selector:string}> };
+function chromeCandidates(){return [process.env.PROGRAMFILES&&`${process.env.PROGRAMFILES}\\Google\\Chrome\\Application\\chrome.exe`,process.env["PROGRAMFILES(X86)"]&&`${process.env["PROGRAMFILES(X86)"]}\\Google\\Chrome\\Application\\chrome.exe`,process.env.LOCALAPPDATA&&`${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`].filter(Boolean) as string[];}
 export class BrowserTool {
-  private browser?: Browser; private context?: BrowserContext; private page?: Page;
-  private async ensureChrome() {
-    const endpoint = process.env.COMMERCA_CHROME_CDP ?? "http://127.0.0.1:9222";
-    try { return await chromium.connectOverCDP(endpoint); } catch (firstError) {
-      const executable = chromeCandidates()[0] || chromeCandidates()[1] || chromeCandidates()[2]; if (!executable) throw firstError;
-      const profile = `${process.env.USERPROFILE || process.cwd()}\\COMMERCA-CLI\\chrome-agent-profile`;
-      await execFileAsync(executable, ["--remote-debugging-port=9222", `--user-data-dir=${profile}`, "--no-first-run", "--no-default-browser-check"], { windowsHide: true });
-      const deadline = Date.now() + 15_000; let lastError: unknown = firstError;
-      while (Date.now() < deadline) { try { return await chromium.connectOverCDP(endpoint); } catch (error) { lastError = error; await new Promise(r => setTimeout(r, 500)); } }
-      throw new Error(`Unable to connect to real Google Chrome on CDP 9222: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
-    }
-  }
-  private async ready() { if (!this.page) await this.connect(); if (!this.page) throw new Error("Chrome is not connected."); return this.page; }
-  async connect(url?: string): Promise<BrowserObservation> {
-    this.browser = await this.ensureChrome(); this.context = this.browser.contexts()[0] ?? await this.browser.newContext(); this.page = this.context.pages()[0] ?? await this.context.newPage();
-    if (url) { await this.page.goto(url, { waitUntil: "domcontentloaded", timeout: 60_000 }); await this.page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined); }
-    return this.observe();
-  }
-  async observe(): Promise<BrowserObservation> { const page = await this.ready(); return { url: page.url(), title: await page.title(), text: (await page.locator("body").innerText()).slice(0, 30_000) }; }
-  async click(selector: string) { const page = await this.ready(); await page.locator(selector).first().click({ timeout: 15_000 }); return this.observe(); }
-  async type(selector: string, text: string, clear = true) { const page = await this.ready(); const loc = page.locator(selector).first(); if (clear) await loc.fill(""); await loc.fill(text); return this.observe(); }
-  async press(selector: string, key: string) { const page = await this.ready(); await page.locator(selector).first().press(key); return this.observe(); }
-  async scroll(amount = 800) { const page = await this.ready(); await page.mouse.wheel(0, amount); await page.waitForTimeout(500); return this.observe(); }
-  async find(text: string) { const page = await this.ready(); const matches = await page.getByText(text, { exact: false }).all(); return { count: matches.length, text, url: page.url() }; }
-  async extract(selector?: string) { const page = await this.ready(); const loc = selector ? page.locator(selector) : page.locator("body"); return (await loc.innerText()).slice(0, 30_000); }
-  async close() { await this.browser?.close(); this.browser = undefined; this.context = undefined; this.page = undefined; }
+ private browser?:Browser; private context?:BrowserContext; private page?:Page;
+ private async ensureChrome(){const endpoint=process.env.COMMERCA_CHROME_CDP??"http://127.0.0.1:9222";try{return await chromium.connectOverCDP(endpoint);}catch(first){const exe=chromeCandidates()[0];if(!exe)throw first;const profile=`${process.env.USERPROFILE||process.cwd()}\\COMMERCA-CLI\\chrome-agent-profile`;await execFileAsync(exe,["--remote-debugging-port=9222",`--user-data-dir=${profile}`,"--no-first-run","--no-default-browser-check"],{windowsHide:true});const end=Date.now()+15000;let err:unknown=first;while(Date.now()<end){try{return await chromium.connectOverCDP(endpoint);}catch(e){err=e;await new Promise(r=>setTimeout(r,500));}}throw new Error(`Chrome CDP unavailable: ${err instanceof Error?err.message:String(err)}`);}}
+ private async ready(){if(!this.page)await this.connect();if(!this.page)throw new Error("Chrome is not connected");return this.page;}
+ async connect(url?:string){this.browser=await this.ensureChrome();this.context=this.browser.contexts()[0]??await this.browser.newContext();this.page=this.context.pages()[0]??await this.context.newPage();if(url){await this.page.goto(url,{waitUntil:"domcontentloaded",timeout:60000});await this.page.waitForTimeout(1500);}return this.observe();}
+ async observe():Promise<BrowserObservation>{const p=await this.ready();const controls=await p.locator('input,textarea,button,a,[role="button"],[role="textbox"],[contenteditable="true"]').evaluateAll((els)=>els.slice(0,150).map((e:any,i)=>{const tag=e.tagName.toLowerCase();const role=e.getAttribute("role")||tag;const name=e.getAttribute("aria-label")||e.innerText?.trim()?.slice(0,100)||e.getAttribute("title")||"";const placeholder=e.getAttribute("placeholder")||"";let selector=e.id?`#${CSS.escape(e.id)}`:e.getAttribute("name")?`${tag}[name="${CSS.escape(e.getAttribute("name"))}"]`:tag; if(selector===tag)selector=`${tag}:nth-of-type(${i+1})`;return{tag,role,name,placeholder,selector};}));return{url:p.url(),title:await p.title(),text:(await p.locator("body").innerText()).slice(0,20000),controls};}
+ async click(selector:string){const p=await this.ready();await p.locator(selector).first().scrollIntoViewIfNeeded();await p.locator(selector).first().click({timeout:15000});await p.waitForTimeout(700);return this.observe();}
+ async type(selector:string,text:string){const p=await this.ready();const l=p.locator(selector).first();await l.scrollIntoViewIfNeeded();await l.fill(text);return this.observe();}
+ async press(selector:string,key:string){const p=await this.ready();await p.locator(selector).first().press(key);await p.waitForTimeout(700);return this.observe();}
+ async scroll(amount=800){const p=await this.ready();await p.mouse.wheel(0,amount);await p.waitForTimeout(500);return this.observe();}
+ async find(text:string){const p=await this.ready();return{count:await p.getByText(text,{exact:false}).count(),text,url:p.url()};}
+ async extract(selector?:string){const p=await this.ready();return(await p.locator(selector||"body").innerText()).slice(0,30000);}
+ async close(){await this.browser?.close();this.browser=undefined;this.context=undefined;this.page=undefined;}
 }
-
-let sharedBrowser: BrowserTool | undefined;
-export const browserTool: Tool = {
-  name: "browser",
-  description: "Control the real Google Chrome on Windows. Actions: open, observe, click, type, press, scroll, find, extract, close. Prefer robust selectors discovered from observation; never claim success without observing the result.",
-  async run(input) {
-    const value = input as { action?: string; url?: string; selector?: string; text?: string; key?: string; amount?: number; clear?: boolean };
-    sharedBrowser ??= new BrowserTool();
-    switch (value.action) {
-      case "open": return sharedBrowser.connect(value.url);
-      case "observe": return sharedBrowser.observe();
-      case "click": if (!value.selector) throw new Error("browser click requires selector"); return sharedBrowser.click(value.selector);
-      case "type": if (!value.selector) throw new Error("browser type requires selector"); return sharedBrowser.type(value.selector, value.text ?? "", value.clear !== false);
-      case "press": if (!value.selector) throw new Error("browser press requires selector"); return sharedBrowser.press(value.selector, value.key ?? "Enter");
-      case "scroll": return sharedBrowser.scroll(value.amount ?? 800);
-      case "find": return sharedBrowser.find(value.text ?? "");
-      case "extract": return sharedBrowser.extract(value.selector);
-      case "close": await sharedBrowser.close(); sharedBrowser = undefined; return { closed: true };
-      default: return sharedBrowser.connect(value.url);
-    }
-  },
-};
+let shared:BrowserTool|undefined;
+export const browserTool:Tool={name:"browser",description:"Control real Google Chrome. Observe returns actionable controls with selectors. Use open, observe, click, type, press, scroll, find, extract, close. Always inspect controls before choosing an interaction.",async run(input){const v=input as any;shared??=new BrowserTool();switch(v.action){case"open":return shared.connect(v.url);case"observe":return shared.observe();case"click":if(!v.selector)throw new Error("browser click requires selector");return shared.click(v.selector);case"type":if(!v.selector)throw new Error("browser type requires selector");return shared.type(v.selector,v.text??"");case"press":if(!v.selector)throw new Error("browser press requires selector");return shared.press(v.selector,v.key??"Enter");case"scroll":return shared.scroll(v.amount??800);case"find":return shared.find(v.text??"");case"extract":return shared.extract(v.selector);case"close":await shared.close();shared=undefined;return{closed:true};default:throw new Error(`Unsupported browser action: ${v.action}`);}}};
