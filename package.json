@@ -9,6 +9,9 @@
     "test": "node --import tsx --test test/**/*.test.ts",
     "workflow:e2e": "node --import tsx --test test/workflow.e2e.test.ts"
   },
+  "dependencies": {
+    "playwright": "^1.55.0"
+  },
   "devDependencies": {
     "@types/node": "^26.3.0",
     "tsx": "^4.23.12",
