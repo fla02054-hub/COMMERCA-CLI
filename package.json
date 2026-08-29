@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "tsx src/cli/index.ts",
     "start": "tsx src/cli/index.ts",
-    "test": "node --import tsx --test test/**/*.test.ts"
+    "test": "node --import tsx --test test/**/*.test.ts",
+    "workflow:e2e": "node --import tsx --test test/workflow.e2e.test.ts"
   },
   "devDependencies": {
     "@types/node": "^26.3.0",
