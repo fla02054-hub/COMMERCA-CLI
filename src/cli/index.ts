@@ -24,6 +24,8 @@ async function searchProducts(providerName: string, query: string) {
   return { provider, products: await provider.search(query) };
 }
 
+const isUrl = (value?: string) => /^https?:\/\//i.test(value ?? "");
+
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
   const workflow = await runWorkflow(goal);
@@ -33,14 +35,31 @@ if (args[0] === "workflow" && args[1] === "run") {
 
 if (args[0] === "product" && args[1] === "providers") {
   const registry = createProductRegistry();
-  console.log(registry.list().join("\n"));
+  console.log(JSON.stringify(registry.list(), null, 2));
   process.exit(0);
 }
 
 if (args[0] === "product" && args[1] === "search") {
-  const providerName = args[2];
+  const first = args[2];
+  const directQuery = args.slice(2).join(" ");
+
+  // URL-first mode: paste a URL and COMMERCA automatically uses Rakatookyang.
+  if (isUrl(first)) {
+    const { products } = await searchProducts("rakatookyang", directQuery);
+    console.log(JSON.stringify(products, null, 2));
+    process.exit(0);
+  }
+
+  // Keep the explicit provider form for keyword searches.
+  const providerName = first;
   const query = args.slice(3).join(" ");
-  if (!providerName || !query) throw new Error("usage: product search <provider> <query>");
+  if (!providerName || !query) {
+    throw new Error(
+      "usage: product search <url-or-provider> <query>\n" +
+      "URL mode: product search <url>\n" +
+      "Provider mode: product search <provider> <query>",
+    );
+  }
   const { products } = await searchProducts(providerName, query);
   console.log(JSON.stringify(products, null, 2));
   process.exit(0);
@@ -72,6 +91,7 @@ if (args[0] === "product" && args[1] === "price-history") {
 console.log("COMMERCA-CLI");
 console.log("  workflow run <goal>");
 console.log("  product providers");
+console.log("  product search <url>");
 console.log("  product search <provider> <query>");
 console.log("  product rank <provider> <query>");
 console.log("  product detail <url>");
