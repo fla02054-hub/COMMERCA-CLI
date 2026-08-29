@@ -7,6 +7,7 @@ export const WORKFLOW_STAGES = [
 
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 export type StageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type WorkflowStatus = "running" | "completed" | "failed";
 export type DecisionKind = "winner" | "loser" | "optimize";
 
 export interface GoalInput { text: string; }
@@ -19,41 +20,23 @@ export interface Publication { organic?: unknown; ads?: unknown; }
 export interface PerformanceReport { reach?: number; ctr?: number; cpc?: number; conversion?: number; commission?: number; }
 export interface DecisionLearning { kind: DecisionKind; reason: string; feedbackStage?: "product-research" | "content-strategy"; }
 
-export interface WorkflowArtifact<T = unknown> {
-  stage: WorkflowStage;
-  type: string;
-  data: T;
-  createdAt: string;
-}
-
-export interface WorkflowStageState {
-  stage: WorkflowStage;
-  status: StageStatus;
-  attempts: number;
-  startedAt?: string;
-  completedAt?: string;
-  error?: string;
-  artifactTypes: string[];
-}
+export interface WorkflowArtifact<T = unknown> { stage: WorkflowStage; type: string; data: T; createdAt: string; }
+export interface WorkflowStageState { stage: WorkflowStage; status: StageStatus; attempts: number; startedAt?: string; completedAt?: string; error?: string; artifactTypes: string[]; }
 
 export interface WorkflowBlueprint {
-  version: 2;
+  version: 3;
+  status: WorkflowStatus;
   stages: WorkflowStageState[];
   currentStage: WorkflowStage;
   transitionHistory: WorkflowStage[];
   maxAttemptsPerStage: number;
 }
 
-export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(
-  WORKFLOW_STAGES.map((stage, index) => [stage, index + 1]),
-) as Record<WorkflowStage, number>;
+export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(WORKFLOW_STAGES.map((stage, index) => [stage, index + 1])) as Record<WorkflowStage, number>;
 
 export function createWorkflowBlueprint(maxAttemptsPerStage = 2): WorkflowBlueprint {
   return {
-    version: 2,
-    currentStage: "goal",
-    transitionHistory: [],
-    maxAttemptsPerStage,
+    version: 3, status: "running", currentStage: "goal", transitionHistory: [], maxAttemptsPerStage,
     stages: WORKFLOW_STAGES.map((stage) => ({ stage, status: "pending", attempts: 0, artifactTypes: [] })),
   };
 }
