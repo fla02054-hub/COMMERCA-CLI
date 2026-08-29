@@ -12,11 +12,6 @@ interface ExtractedProduct {
   originalPrice?: number;
 }
 
-const toNumber = (value: string): number | undefined => {
-  const match = value.replace(/,/g, "").match(/(?:฿|บาท|THB)\s*(\d+(?:\.\d+)?)/i);
-  return match ? Number(match[1]) : undefined;
-};
-
 export class RakatookyangProvider implements ProductProvider {
   readonly name = "rakatookyang";
 
@@ -43,26 +38,31 @@ export class RakatookyangProvider implements ProductProvider {
         const score = (el: HTMLInputElement | HTMLTextAreaElement) => {
           const meta = [el.placeholder, el.name, el.id, el.getAttribute("aria-label"), el.getAttribute("type")]
             .filter(Boolean).join(" ").toLowerCase();
-          let score = 0;
-          if (/url|link|ลิงก์|สินค้า|product/.test(meta)) score += 20;
-          if (/search|ค้นหา|keyword|query/.test(meta)) score += 10;
-          return score;
+          let value = 0;
+          if (/url|link|ลิงก์|สินค้า|product/.test(meta)) value += 20;
+          if (/search|ค้นหา|keyword|query/.test(meta)) value += 10;
+          return value;
         };
 
-        const input = fields.sort((a, b) => score(b) - score(a))[0];
-        if (!input) return { found: false };
+        let bestIndex = -1;
+        let bestScore = -1;
+        fields.forEach((field, index) => {
+          const currentScore = score(field);
+          if (currentScore > bestScore) {
+            bestScore = currentScore;
+            bestIndex = index;
+          }
+        });
 
-        return {
-          found: true,
-          selector: input.tagName.toLowerCase() === "textarea" ? "textarea" : "input",
-        };
+        return { found: bestIndex >= 0, index: bestIndex };
       });
 
       if (!inputInfo.found) {
         throw new Error(`Rakatookyang search input not found. Page: ${page.url()}`);
       }
 
-      const input = page.locator(inputInfo.selector).first();
+      const allInputs = page.locator("input, textarea");
+      const input = allInputs.nth(inputInfo.index);
       await input.fill(productUrl);
 
       const form = input.locator("xpath=ancestor::form[1]");
@@ -72,11 +72,8 @@ export class RakatookyangProvider implements ProductProvider {
         else await input.press("Enter");
       } else {
         const buttons = page.getByRole("button");
-        if (await buttons.count()) {
-          await buttons.first().click();
-        } else {
-          await input.press("Enter");
-        }
+        if (await buttons.count()) await buttons.first().click();
+        else await input.press("Enter");
       }
 
       await page.waitForTimeout(2500);
@@ -121,8 +118,8 @@ export class RakatookyangProvider implements ProductProvider {
           id: `rakatookyang-${Date.now()}-${index + 1}`,
           name: item.title,
           url: item.url,
-          price: item.price,
-          originalPrice: item.originalPrice,
+          ...(item.price !== undefined ? { price: item.price } : {}),
+          ...(item.originalPrice !== undefined ? { originalPrice: item.originalPrice } : {}),
           source: "rakatookyang",
           discoveredAt: new Date().toISOString(),
         }));
