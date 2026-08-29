@@ -1,6 +1,23 @@
+import fs from "node:fs";
+import path from "node:path";
 import { AgentToolRuntime } from "./tool-runtime.js";
 import { browserTool } from "./browser-tool.js";
 import { OpenRouterBrain } from "./openrouter-brain.js";
+
+function loadLocalEnv() {
+  const file = path.join(process.cwd(), ".env");
+  if (!fs.existsSync(file)) return;
+  for (const raw of fs.readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!match) continue;
+    const [, key, value] = match;
+    if (process.env[key] === undefined) process.env[key] = value.replace(/^['"]|['"]$/g, "");
+  }
+}
+
+loadLocalEnv();
 
 export type AgentAction = { type: "observe" | "plan" | "use_tool" | "analyze" | "decide" | "report"; thought: string; tool?: string; input?: unknown; result?: unknown };
 export type AgentTask = { goal: string; context?: Record<string, unknown> };
@@ -23,7 +40,10 @@ export class CommercaAgent {
   readonly role = "Autonomous general-purpose AI agent";
   readonly tools = new AgentToolRuntime();
   private readonly brain: AgentBrain;
-  constructor(brain?: AgentBrain) { this.brain = brain ?? (process.env.OPENROUTER_API_KEY ? new OpenRouterBrain() : new RuleBasedBrain()); this.tools.register(browserTool); }
+  constructor(brain?: AgentBrain) {
+    this.brain = brain ?? (process.env.OPENROUTER_API_KEY ? new OpenRouterBrain() : new RuleBasedBrain());
+    this.tools.register(browserTool);
+  }
 
   async run(task: AgentTask): Promise<AgentResult> {
     if (!task.goal.trim()) return { status: "needs_input", goal: task.goal, plan: [], report: "A goal is required." };
