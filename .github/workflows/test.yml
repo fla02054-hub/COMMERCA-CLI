@@ -8,6 +8,9 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    env:
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      COMMERCA_USE_GEMINI: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -16,5 +19,5 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
-      - name: CLI workflow smoke test
+      - name: CLI workflow smoke test with Gemini
         run: npm run workflow:e2e
