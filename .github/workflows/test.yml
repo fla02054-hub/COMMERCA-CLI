@@ -18,8 +18,8 @@ jobs:
       - run: npm ci
       - name: Core tests (no external providers)
         run: npm test
-      - name: CLI workflow smoke test with Gemini
+      - name: Gemini real API integration test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          COMMERCA_USE_GEMINI: "1"
-        run: npm run workflow:e2e
+          GEMINI_MODEL: gemini-2.5-flash-lite
+        run: node --import tsx --test test/gemini.integration.test.ts
