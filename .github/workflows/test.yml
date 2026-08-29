@@ -22,9 +22,9 @@ jobs:
         run: ffmpeg -version
       - name: Core tests (no external providers)
         run: npm test
-      - name: Production 10 real MP4 render test
+      - name: Stage 10 Production real MP4 render test
         run: node --import tsx --test test/production.render.e2e.test.ts
-      - name: Production 07 QC real MP4 gate
+      - name: Stage 11 QC real MP4 gate
         run: node --import tsx --test test/qc.final-mp4.e2e.test.ts
       - name: Gemini real API integration test
         env:
