@@ -1,4 +1,28 @@
-import type { WorkflowArtifact, WorkflowStage } from "./workflow-schema.js";
+import type {
+  ContentStrategy,
+  CreativeStrategy,
+  DecisionLearning,
+  GoalInput,
+  MarketEvidence,
+  PerformanceReport,
+  ProductionPackage,
+  Publication,
+  QCReport,
+  WorkflowArtifact,
+  WorkflowStage,
+} from "./workflow-schema.js";
+
+export interface StageArtifactMap {
+  goal: GoalInput;
+  "market-research": MarketEvidence;
+  "content-strategy": ContentStrategy;
+  "creative-strategy": CreativeStrategy;
+  production: ProductionPackage;
+  qc: QCReport;
+  publishing: Publication;
+  performance: PerformanceReport;
+  "decision-learning": DecisionLearning;
+}
 
 export interface StageContext {
   workflowId: string;
