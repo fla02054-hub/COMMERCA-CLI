@@ -9,6 +9,7 @@ export interface StageContext {
 
 export interface StageResult<T = unknown> {
   artifacts: WorkflowArtifact<T>[];
+  /** Explicit transition; omitted means the normal next stage. */
   nextStage?: WorkflowStage;
 }
 
