@@ -10,8 +10,8 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -24,6 +24,8 @@ jobs:
         run: npm test
       - name: Production 10 real MP4 render test
         run: node --import tsx --test test/production.render.e2e.test.ts
+      - name: Production 07 QC real MP4 gate
+        run: node --import tsx --test test/qc.final-mp4.e2e.test.ts
       - name: Gemini real API integration test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -31,7 +33,7 @@ jobs:
         run: node --import tsx --test test/gemini.integration.test.ts
       - name: Upload rendered MP4 test artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: production-render-test
           path: /tmp/commerca-production-*/final.mp4
