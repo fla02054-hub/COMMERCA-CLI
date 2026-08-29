@@ -49,26 +49,45 @@ if (args[0] === "product" && args[1] === "providers") {
 
 if (args[0] === "product" && args[1] === "search") {
   const input = args.slice(2).join(" ").trim();
-  if (!input) throw new Error("usage: product search <url-or-query>");
+  if (!input) throw new Error("usage: product search <query> | product search <provider> <query> | product search <url>");
 
-  // URL-first: open Rakatookyang, paste the original URL, then read its result.
+  // URL mode: product URL is opened directly and inspected; other URLs are searched by RakaTookYang.
   if (isUrl(input)) {
     const { products } = await searchProducts("rakatookyang", input);
     console.log(JSON.stringify(products, null, 2));
     process.exit(0);
   }
 
-  const providerName = args[2];
-  const query = args.slice(3).join(" ").trim();
-  if (!providerName || !query) {
-    throw new Error(
-      "usage: product search <url-or-query>\n" +
-      "URL mode: product search <url>\n" +
-      "Provider mode: product search <provider> <query>",
-    );
+  // Explicit provider mode: product search <provider> <query>
+  const knownProviders = createProductRegistry().list().map((x) => x.name);
+  const maybeProvider = args[2];
+  if (maybeProvider && knownProviders.includes(maybeProvider)) {
+    const query = args.slice(3).join(" ").trim();
+    if (!query) throw new Error(`usage: product search ${maybeProvider} <query>`);
+    const { products } = await searchProducts(maybeProvider, query);
+    console.log(JSON.stringify(products, null, 2));
+    process.exit(0);
   }
-  const { products } = await searchProducts(providerName, query);
+
+  // Natural/default mode: product search <query> uses RakaTookYang browser search.
+  const { products } = await searchProducts("rakatookyang", input);
   console.log(JSON.stringify(products, null, 2));
+  process.exit(0);
+}
+
+if (args[0] === "product" && args[1] === "inspect") {
+  const url = args.slice(2).join(" ").trim();
+  if (!url) throw new Error("usage: product inspect <url>");
+  const provider = new RakatookyangProvider();
+  console.log(JSON.stringify(await provider.inspect(url), null, 2));
+  process.exit(0);
+}
+
+if (args[0] === "product" && args[1] === "audit") {
+  const url = args[2] || "https://rakatookyang.com/";
+  const provider = new RakatookyangProvider();
+  const result = await provider.audit(url);
+  console.log(JSON.stringify(result, null, 2));
   process.exit(0);
 }
 
@@ -98,8 +117,11 @@ if (args[0] === "product" && args[1] === "price-history") {
 console.log("COMMERCA-CLI");
 console.log("  workflow run <goal>");
 console.log("  product providers");
-console.log("  product search <url-or-query>");
+console.log("  product search <query>");
 console.log("  product search <provider> <query>");
+console.log("  product search <url>");
+console.log("  product inspect <url>");
+console.log("  product audit [url]");
 console.log("  product rank <provider> <query>");
 console.log("  product detail <url>");
 console.log("  product price-history <url>");
