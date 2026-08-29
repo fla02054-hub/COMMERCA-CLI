@@ -36,6 +36,18 @@ function transitionAllowed(from: WorkflowStage, to: WorkflowStage): boolean {
   return ALLOWED_TRANSITIONS[from].includes(to);
 }
 
+function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void {
+  const fromIndex = STAGE_ORDER[from];
+  for (const state of workflow.state.stages) {
+    if (STAGE_ORDER[state.stage] >= fromIndex) {
+      state.status = "pending";
+      state.startedAt = undefined;
+      state.completedAt = undefined;
+      state.error = undefined;
+    }
+  }
+}
+
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
   let stage: WorkflowStage = workflow.state.currentStage;
   let guard = 0;
@@ -67,6 +79,8 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) return workflow;
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
+
+      if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next);
       stage = next;
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
