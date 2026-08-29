@@ -10,9 +10,10 @@ export interface RakatookyangPriceResult extends Product {
   priceHistory?: Array<{ date?: string; price: number }>;
 }
 
-export async function readRakatookyangPriceHistory(shopeeUrl: string): Promise<RakatookyangPriceResult> {
-  if (!/^https?:\/\/(?:www\.)?shopee\.co\.th\//i.test(shopeeUrl)) {
-    throw new Error("Rakatookyang requires a Shopee product URL copied from Shopee.");
+export async function readRakatookyangPriceHistory(url: string): Promise<RakatookyangPriceResult> {
+  const inputUrl = url.trim();
+  if (!/^https?:\/\/\S+$/i.test(inputUrl)) {
+    throw new Error("Rakatookyang requires a valid http:// or https:// URL.");
   }
 
   const browser = new BrowserController({ launchIfNeeded: true, headless: false });
@@ -21,7 +22,7 @@ export async function readRakatookyangPriceHistory(shopeeUrl: string): Promise<R
     await browser.open(BASE_URL);
     await browser.wait(2000);
 
-    const result = await browser.evaluate<RakatookyangPageResult>(`(${submitAndRead.toString()})(${JSON.stringify(shopeeUrl)})`);
+    const result = await browser.evaluate<RakatookyangPageResult>(`(${submitAndRead.toString()})(${JSON.stringify(inputUrl)})`);
     if (!result || result.status === "blocked") {
       throw new Error(`Rakatookyang blocked the request. URL: ${result?.url ?? BASE_URL}`);
     }
@@ -38,7 +39,7 @@ export async function readRakatookyangPriceHistory(shopeeUrl: string): Promise<R
 
     return {
       id: `rakatookyang-${Date.now()}`,
-      name: result.name ?? "Shopee product",
+      name: result.name ?? "Product",
       ...(result.price !== undefined ? { price: result.price } : {}),
       ...(result.originalPrice !== undefined ? { originalPrice: result.originalPrice } : {}),
       ...(lowestPrice !== undefined ? { lowestPrice } : {}),
@@ -47,7 +48,7 @@ export async function readRakatookyangPriceHistory(shopeeUrl: string): Promise<R
       ...(result.rating !== undefined ? { rating: result.rating } : {}),
       ...(result.reviewCount !== undefined ? { reviewCount: result.reviewCount } : {}),
       ...(result.seller ? { seller: result.seller } : {}),
-      url: result.shopeeUrl ?? shopeeUrl,
+      url: result.sourceUrl ?? inputUrl,
       source: "rakatookyang",
       discoveredAt: new Date().toISOString(),
       priceHistory: history,
@@ -67,11 +68,11 @@ interface RakatookyangPageResult {
   rating?: number;
   reviewCount?: number;
   seller?: string;
-  shopeeUrl?: string;
+  sourceUrl?: string;
   priceHistory?: Array<{ date?: string; price: number }>;
 }
 
-async function submitAndRead(shopeeUrl: string): Promise<RakatookyangPageResult> {
+async function submitAndRead(inputUrl: string): Promise<RakatookyangPageResult> {
   const state = () => ({ url: location.href, title: document.title });
   const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/i.test(text);
   if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) return { status: "blocked", ...state() };
@@ -82,7 +83,7 @@ async function submitAndRead(shopeeUrl: string): Promise<RakatookyangPageResult>
 
   input.focus();
   const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-  if (setter) setter.call(input, shopeeUrl); else input.value = shopeeUrl;
+  if (setter) setter.call(input, inputUrl); else input.value = inputUrl;
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
 
@@ -128,7 +129,7 @@ async function submitAndRead(shopeeUrl: string): Promise<RakatookyangPageResult>
     ...(currentPrice !== undefined ? { price: currentPrice } : {}),
     ...(discount ? { discount: Number(discount) } : {}),
     ...(rating ? { rating: Number(rating) } : {}),
-    shopeeUrl,
+    sourceUrl: inputUrl,
     priceHistory: prices,
   };
 }
