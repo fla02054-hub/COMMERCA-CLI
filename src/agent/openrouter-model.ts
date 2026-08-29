@@ -7,7 +7,9 @@ export async function selectFreeModel(apiKey: string): Promise<ModelInfo> {
   if (!response.ok) throw new Error(`OpenRouter model discovery failed: ${response.status} ${await response.text()}`);
   const payload = await response.json() as { data?: ModelInfo[] };
   const free = (payload.data ?? []).filter((m) => m.id.endsWith(":free"));
-  const preferred = free.find((m) => /qwen|deepseek|gemma|llama/i.test(`${m.id} ${m.name ?? ""}`)) ?? free[0];
+  const preferred = free.find((m) => /gemini/i.test(`${m.id} ${m.name ?? ""}`))
+    ?? free.find((m) => /qwen|deepseek|gemma|llama/i.test(`${m.id} ${m.name ?? ""}`))
+    ?? free[0];
   if (!preferred) throw new Error("OpenRouter returned no free models.");
   return preferred;
 }
