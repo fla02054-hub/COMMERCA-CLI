@@ -14,10 +14,7 @@ const fixtureProduct: Product = {
 };
 
 test("COMMERCA workflow completes all 14 stages without external providers", async () => {
-  const result = await executeWorkflow(
-    createRuntimeWorkflow("find a high-potential product"),
-    createStageRegistry({ discoverProducts: async () => [fixtureProduct] }),
-  );
+  const result = await executeWorkflow(createRuntimeWorkflow("find a high-potential product"), createStageRegistry({ discoverProducts: async () => [fixtureProduct] }));
   assert.equal(result.state.status, "completed");
   assert.equal(result.state.stages.length, 14);
   assert.deepEqual(result.state.stages.map((s) => s.status), WORKFLOW_STAGES.map(() => "completed"));
@@ -41,7 +38,7 @@ test("runtime retries a failed stage and marks the workflow failed", async () =>
   assert.equal(failed?.attempts, 2);
 });
 
-test("publishing is blocked when QC fails", async () => {
+test("QC failure stops the workflow before publishing", async () => {
   const registry = new WorkflowStageRegistry();
   for (const stage of WORKFLOW_STAGES) registry.register(new FunctionStage(stage, async () => {
     if (stage === "qc") return { artifacts: [{ stage, type: "qc-report", data: { passed: false, issues: ["fixture"] }, createdAt: new Date().toISOString() }] };
@@ -49,5 +46,7 @@ test("publishing is blocked when QC fails", async () => {
   }));
   const result = await executeWorkflow(createRuntimeWorkflow("qc gate test"), registry);
   assert.equal(result.state.status, "failed");
-  assert.equal(result.state.stages.find((s) => s.stage === "publishing")?.status, "failed");
+  assert.equal(result.state.stages.find((s) => s.stage === "qc")?.status, "failed");
+  assert.equal(result.state.stages.find((s) => s.stage === "publishing")?.status, "pending");
+  assert.equal(result.state.transitionHistory.at(-1), "qc");
 });
