@@ -1,28 +1,23 @@
-/**
- * COMMERCA workflow blueprint.
- *
- * This file defines the complete stage contract before implementation of
- * downstream automation. Stages are intentionally provider-agnostic.
- */
+/** Complete 14-stage COMMERCA workflow state and typed artifact contracts. */
 export const WORKFLOW_STAGES = [
-  "goal",
-  "product-discovery",
-  "product-research",
-  "market-research",
-  "product-analysis",
-  "product-scoring",
-  "product-selection",
-  "content-strategy",
-  "creative-strategy",
-  "production",
-  "qc",
-  "publishing",
-  "performance",
-  "decision-learning",
+  "goal", "product-discovery", "product-research", "market-research",
+  "product-analysis", "product-scoring", "product-selection", "content-strategy",
+  "creative-strategy", "production", "qc", "publishing", "performance", "decision-learning",
 ] as const;
 
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
 export type StageStatus = "pending" | "running" | "completed" | "failed" | "skipped";
+export type DecisionKind = "winner" | "loser" | "optimize";
+
+export interface GoalInput { text: string; }
+export interface MarketEvidence { demand?: unknown; trend?: unknown; competitor?: unknown; adsEvidence?: unknown; status?: "verified" | "pending-provider"; }
+export interface ContentStrategy { angle: string; hook: string; copy: string; cta: string; }
+export interface CreativeStrategy { image: unknown; video: unknown; storyboard: unknown; prompt: unknown; }
+export interface ProductionPackage { image?: unknown; video?: unknown; voice?: unknown; subtitle?: unknown; editing?: unknown; }
+export interface QCReport { passed: boolean; issues: string[]; revisionStage?: "creative-strategy" | "production" | "content-strategy"; }
+export interface Publication { organic?: unknown; ads?: unknown; }
+export interface PerformanceReport { reach?: number; ctr?: number; cpc?: number; conversion?: number; commission?: number; }
+export interface DecisionLearning { kind: DecisionKind; reason: string; feedbackStage?: "product-research" | "content-strategy"; }
 
 export interface WorkflowArtifact<T = unknown> {
   stage: WorkflowStage;
@@ -42,24 +37,23 @@ export interface WorkflowStageState {
 }
 
 export interface WorkflowBlueprint {
-  version: 1;
+  version: 2;
   stages: WorkflowStageState[];
   currentStage: WorkflowStage;
+  transitionHistory: WorkflowStage[];
+  maxAttemptsPerStage: number;
 }
 
 export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(
   WORKFLOW_STAGES.map((stage, index) => [stage, index + 1]),
 ) as Record<WorkflowStage, number>;
 
-export function createWorkflowBlueprint(): WorkflowBlueprint {
+export function createWorkflowBlueprint(maxAttemptsPerStage = 2): WorkflowBlueprint {
   return {
-    version: 1,
+    version: 2,
     currentStage: "goal",
-    stages: WORKFLOW_STAGES.map((stage) => ({
-      stage,
-      status: "pending",
-      attempts: 0,
-      artifactTypes: [],
-    })),
+    transitionHistory: [],
+    maxAttemptsPerStage,
+    stages: WORKFLOW_STAGES.map((stage) => ({ stage, status: "pending", attempts: 0, artifactTypes: [] })),
   };
 }
