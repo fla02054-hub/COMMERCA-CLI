@@ -1,18 +1,4 @@
 export type { Product } from "./types.js";
-export type { ProductDiscovery } from "./discovery.js";
-
-export {
-  LocalProductDiscovery,
-  type LocalProductDiscoveryOptions,
-} from "./local-discovery.js";
-
-export type { ProductProvider } from "./providers/index.js";
-export {
-  ShopeeProvider,
-  ShopeeBrowserProvider,
-  RakatookyangProvider,
-  type ShopeeSearchOptions,
-} from "./providers/index.js";
 
 export {
   readShopeeProductDetail,
@@ -23,8 +9,6 @@ export {
   readRakatookyangPriceHistory,
   type RakatookyangPriceResult,
 } from "./rakatookyang-price.js";
-
-export { ProductProviderRegistry } from "./registry.js";
 
 export {
   analyzeProduct,
