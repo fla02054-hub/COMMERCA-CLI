@@ -25,6 +25,11 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
   }
 }
 
+function qcFailed(resultArtifacts: WorkflowArtifact[]): boolean {
+  const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
+  return typeof report === "object" && report !== null && "passed" in report && (report as { passed?: unknown }).passed === false;
+}
+
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
   let stage = workflow.state.currentStage;
   let guard = 0;
@@ -44,6 +49,15 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const result = await registry.get(stage).execute(context);
       workflow.artifacts.push(...result.artifacts);
       state.artifactTypes.push(...result.artifacts.map((item) => item.type));
+
+      // A failed QC report is a workflow gate. Publishing can never execute after QC failure.
+      if (stage === "qc" && qcFailed(result.artifacts) && !result.nextStage) {
+        state.status = "failed";
+        state.error = "QC failed; revision is required before publishing.";
+        workflow.state.status = "failed";
+        return workflow;
+      }
+
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
