@@ -30,6 +30,8 @@ jobs:
         run: node --import tsx --test test/publishing.test.ts
       - name: Stage 13 Performance gate
         run: node --import tsx --test test/performance.test.ts
+      - name: Stage 14 Decision and Learning gate
+        run: node --import tsx --test test/decision.test.ts
       - name: Gemini real API integration test
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
