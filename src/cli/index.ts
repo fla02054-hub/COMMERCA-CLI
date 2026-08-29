@@ -2,6 +2,7 @@ import { createWorkflow, runWorkflow } from "../runtime/index.js";
 import {
   ProductProviderRegistry,
   RakatookyangProvider,
+  rankProducts,
   readRakatookyangPriceHistory,
   readShopeeProductDetail,
   ShopeeBrowserProvider,
@@ -16,6 +17,13 @@ function createProductRegistry(): ProductProviderRegistry {
   return registry;
 }
 
+async function searchProducts(providerName: string, query: string) {
+  const registry = createProductRegistry();
+  const provider = registry.get(providerName);
+  if (!provider) throw new Error(`unknown product provider: ${providerName}`);
+  return { provider, products: await provider.search(query) };
+}
+
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
   const workflow = createWorkflow(goal);
@@ -25,8 +33,7 @@ if (args[0] === "workflow" && args[1] === "run") {
 
 if (args[0] === "product" && args[1] === "providers") {
   const registry = createProductRegistry();
-  console.log("");
-  console.log("=== PRODUCT PROVIDERS ===");
+  console.log("\n=== PRODUCT PROVIDERS ===");
   for (const provider of registry.list()) console.log(`- ${provider.name}`);
   console.log("");
   process.exit(0);
@@ -38,11 +45,9 @@ if (args[0] === "product" && args[1] === "price-history") {
     console.error("Error: product price-history requires a Shopee product URL.");
     process.exit(1);
   }
-
   try {
     const product = await readRakatookyangPriceHistory(url);
-    console.log("");
-    console.log("=== RAKATOOKYANG PRICE HISTORY ===");
+    console.log("\n=== RAKATOOKYANG PRICE HISTORY ===");
     console.log(`Product: ${product.name}`);
     if (product.price !== undefined) console.log(`Current: ฿${product.price.toLocaleString()}`);
     if (product.lowestPrice !== undefined) console.log(`Lowest: ฿${product.lowestPrice.toLocaleString()}`);
@@ -54,11 +59,8 @@ if (args[0] === "product" && args[1] === "price-history") {
     if (product.seller) console.log(`Seller: ${product.seller}`);
     console.log(`Shopee URL: ${product.url}`);
     console.log(`History points: ${product.priceHistory?.length ?? 0}`);
-    console.log("");
-    if (product.priceHistory?.length) {
-      for (const point of product.priceHistory) {
-        console.log(`- ${point.date ?? "date unavailable"}: ฿${point.price.toLocaleString()}`);
-      }
+    for (const point of product.priceHistory ?? []) {
+      console.log(`- ${point.date ?? "date unavailable"}: ฿${point.price.toLocaleString()}`);
     }
   } catch (error) {
     console.error(`rakatookyang price history failed: ${String(error)}`);
@@ -67,54 +69,64 @@ if (args[0] === "product" && args[1] === "price-history") {
   process.exit(0);
 }
 
-if (args[0] === "product" && args[1] === "search") {
-  const registry = createProductRegistry();
+if (args[0] === "product" && (args[1] === "search" || args[1] === "analyze")) {
   let providerName = "shopee-browser";
   let queryArgs = args.slice(2);
 
   if (queryArgs[0] === "--provider") {
     providerName = queryArgs[1] ?? "";
     queryArgs = queryArgs.slice(2);
-  } else if (queryArgs[0] && registry.get(queryArgs[0])) {
+  } else if (queryArgs[0] && createProductRegistry().get(queryArgs[0])) {
     providerName = queryArgs[0];
     queryArgs = queryArgs.slice(1);
   }
 
   const query = queryArgs.join(" ").trim();
   if (!query) {
-    console.error("Error: product search requires a query.");
-    process.exit(1);
-  }
-
-  const provider = registry.get(providerName);
-  if (!provider) {
-    console.error(`Error: unknown product provider: ${providerName}`);
+    console.error(`Error: product ${args[1]} requires a query.`);
     process.exit(1);
   }
 
   try {
-    const products = await provider.search(query);
-    console.log("");
-    console.log("=== PRODUCT DISCOVERY ===");
-    console.log(`Provider: ${provider.name}`);
-    console.log(`Query: ${query}`);
-    console.log(`Products found: ${products.length}`);
-    console.log("");
-    products.forEach((product, index) => {
-      console.log(`${index + 1}. ${product.name}`);
-      if (product.price !== undefined) console.log(`   Price: ฿${product.price.toLocaleString()}`);
-      if (product.originalPrice !== undefined) console.log(`   Original: ฿${product.originalPrice.toLocaleString()}`);
-      if (product.discount !== undefined) console.log(`   Discount: ${product.discount}%`);
-      if (product.rating !== undefined) console.log(`   Rating: ${product.rating}`);
-      if (product.reviewCount !== undefined) console.log(`   Reviews: ${product.reviewCount.toLocaleString()}`);
-      if (product.salesCount !== undefined) console.log(`   Sales: ${product.salesCount.toLocaleString()}`);
-      if (product.seller) console.log(`   Seller: ${product.seller}`);
-      if (product.promotion) console.log(`   Promotion: ${product.promotion}`);
-      if (product.url) console.log(`   URL: ${product.url}`);
-      console.log("");
-    });
+    const { provider, products } = await searchProducts(providerName, query);
+    if (args[1] === "analyze") {
+      const ranked = rankProducts(products);
+      console.log("\n=== PRODUCT ANALYSIS ===");
+      console.log(`Provider: ${provider.name}`);
+      console.log(`Query: ${query}`);
+      console.log(`Products analyzed: ${ranked.length}\n`);
+      ranked.forEach((analysis, index) => {
+        console.log(`${index + 1}. ${analysis.product.name}`);
+        console.log(`   Score: ${analysis.score}/100`);
+        console.log(`   Factors: price=${analysis.factors.price}, commission=${analysis.factors.commission}, demand=${analysis.factors.demand}, socialProof=${analysis.factors.socialProof}, promotion=${analysis.factors.promotion}, content=${analysis.factors.contentPotential}`);
+        console.log(`   Reasons: ${analysis.reasons.join(", ")}`);
+        if (analysis.product.price !== undefined) console.log(`   Price: ฿${analysis.product.price.toLocaleString()}`);
+        if (analysis.product.commission !== undefined) console.log(`   Commission: ฿${analysis.product.commission.toLocaleString()}`);
+        if (analysis.product.salesCount !== undefined) console.log(`   Sales: ${analysis.product.salesCount.toLocaleString()}`);
+        if (analysis.product.url) console.log(`   URL: ${analysis.product.url}`);
+        console.log("");
+      });
+    } else {
+      console.log("\n=== PRODUCT DISCOVERY ===");
+      console.log(`Provider: ${provider.name}`);
+      console.log(`Query: ${query}`);
+      console.log(`Products found: ${products.length}\n`);
+      products.forEach((product, index) => {
+        console.log(`${index + 1}. ${product.name}`);
+        if (product.price !== undefined) console.log(`   Price: ฿${product.price.toLocaleString()}`);
+        if (product.originalPrice !== undefined) console.log(`   Original: ฿${product.originalPrice.toLocaleString()}`);
+        if (product.discount !== undefined) console.log(`   Discount: ${product.discount}%`);
+        if (product.rating !== undefined) console.log(`   Rating: ${product.rating}`);
+        if (product.reviewCount !== undefined) console.log(`   Reviews: ${product.reviewCount.toLocaleString()}`);
+        if (product.salesCount !== undefined) console.log(`   Sales: ${product.salesCount.toLocaleString()}`);
+        if (product.seller) console.log(`   Seller: ${product.seller}`);
+        if (product.promotion) console.log(`   Promotion: ${product.promotion}`);
+        if (product.url) console.log(`   URL: ${product.url}`);
+        console.log("");
+      });
+    }
   } catch (error) {
-    console.error(`${provider.name} product search failed: ${String(error)}`);
+    console.error(`product ${args[1]} failed: ${String(error)}`);
     process.exit(1);
   }
   process.exit(0);
@@ -136,16 +148,18 @@ if (args[0] === "product" && args[1] === "detail") {
   process.exit(0);
 }
 
-console.log("");
-console.log("COMMERCA-CLI");
-console.log("Commerce Automation Runtime");
-console.log("");
-console.log("Commands:");
-console.log("  product search <query>");
-console.log("  product search <provider> <query>");
-console.log("  product search --provider <provider> <query>");
-console.log("  product detail <shopee-url>");
-console.log("  product price-history <shopee-url>");
-console.log("  product providers");
-console.log("  workflow run <goal>");
-console.log("");
+console.log(`
+COMMERCA-CLI
+Commerce Automation Runtime
+
+Commands:
+  product search <query>
+  product search <provider> <query>
+  product search --provider <provider> <query>
+  product analyze <query>
+  product analyze --provider <provider> <query>
+  product detail <shopee-url>
+  product price-history <shopee-url>
+  product providers
+  workflow run <goal>
+`);
