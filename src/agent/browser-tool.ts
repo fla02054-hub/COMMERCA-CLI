@@ -33,23 +33,25 @@ export class BrowserTool {
   async extract(selector?: string) { const page = await this.ready(); const loc = selector ? page.locator(selector) : page.locator("body"); return (await loc.innerText()).slice(0, 30_000); }
   async close() { await this.browser?.close(); this.browser = undefined; this.context = undefined; this.page = undefined; }
 }
+
+let sharedBrowser: BrowserTool | undefined;
 export const browserTool: Tool = {
   name: "browser",
-  description: "Control the real Google Chrome on Windows. Actions: open, observe, click, type, press, scroll, find, extract, close. Prefer visible text or robust CSS selectors; never claim success without observing the result.",
+  description: "Control the real Google Chrome on Windows. Actions: open, observe, click, type, press, scroll, find, extract, close. Prefer robust selectors discovered from observation; never claim success without observing the result.",
   async run(input) {
     const value = input as { action?: string; url?: string; selector?: string; text?: string; key?: string; amount?: number; clear?: boolean };
-    const browser = new BrowserTool();
+    sharedBrowser ??= new BrowserTool();
     switch (value.action) {
-      case "open": return browser.connect(value.url);
-      case "observe": return browser.observe();
-      case "click": if (!value.selector) throw new Error("browser click requires selector"); return browser.click(value.selector);
-      case "type": if (!value.selector) throw new Error("browser type requires selector"); return browser.type(value.selector, value.text ?? "", value.clear !== false);
-      case "press": if (!value.selector) throw new Error("browser press requires selector"); return browser.press(value.selector, value.key ?? "Enter");
-      case "scroll": return browser.scroll(value.amount ?? 800);
-      case "find": return browser.find(value.text ?? "");
-      case "extract": return browser.extract(value.selector);
-      case "close": return browser.close();
-      default: return browser.connect(value.url);
+      case "open": return sharedBrowser.connect(value.url);
+      case "observe": return sharedBrowser.observe();
+      case "click": if (!value.selector) throw new Error("browser click requires selector"); return sharedBrowser.click(value.selector);
+      case "type": if (!value.selector) throw new Error("browser type requires selector"); return sharedBrowser.type(value.selector, value.text ?? "", value.clear !== false);
+      case "press": if (!value.selector) throw new Error("browser press requires selector"); return sharedBrowser.press(value.selector, value.key ?? "Enter");
+      case "scroll": return sharedBrowser.scroll(value.amount ?? 800);
+      case "find": return sharedBrowser.find(value.text ?? "");
+      case "extract": return sharedBrowser.extract(value.selector);
+      case "close": await sharedBrowser.close(); sharedBrowser = undefined; return { closed: true };
+      default: return sharedBrowser.connect(value.url);
     }
   },
 };
