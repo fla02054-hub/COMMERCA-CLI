@@ -33,7 +33,7 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
     if (!state) throw new Error(`Missing workflow state for stage: ${stage}`);
     if (state.status === "completed" || state.status === "skipped") {
       const next = WORKFLOW_STAGES[STAGE_ORDER[stage]];
-      if (!next) return workflow;
+      if (!next) { workflow.state.status = "completed"; return workflow; }
       stage = next; continue;
     }
     workflow.state.currentStage = stage;
@@ -46,15 +46,16 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       state.artifactTypes.push(...result.artifacts.map((item) => item.type));
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
-      if (!next) return workflow;
+      if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
       if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next);
       stage = next;
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
       if (state.attempts < workflow.state.maxAttemptsPerStage) { state.status = "pending"; continue; }
-      state.status = "failed"; return workflow;
+      state.status = "failed"; workflow.state.status = "failed"; return workflow;
     }
   }
+  workflow.state.status = "failed";
   throw new Error("Workflow transition guard exceeded 100 iterations.");
 }
