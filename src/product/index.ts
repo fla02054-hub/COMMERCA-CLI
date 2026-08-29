@@ -35,3 +35,9 @@ export {
   rankProducts,
   selectBestProduct,
 } from "./selection.js";
+
+export {
+  scoreProduct,
+  scoreProducts,
+  type ProductScorecard,
+} from "./scoring.js";
