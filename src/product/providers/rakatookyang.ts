@@ -33,25 +33,36 @@ export class RakatookyangProvider implements ProductProvider {
   readonly name = "rakatookyang";
 
   async search(query: string): Promise<Product[]> {
+    const input = query.trim();
+    if (!input) throw new Error("Rakatookyang search requires a URL or query.");
+
     const browser = new BrowserController({ launchIfNeeded: true, headless: false });
 
     try {
       await browser.connect();
       await browser.open(BASE_URL);
-      await browser.wait(2500);
+      await browser.wait(3500);
 
       const result = await browser.evaluate<BrowserSearchResult>(
-        `(${buildBrowserSearch.toString()})(${JSON.stringify(query)}, ${MAX_PRODUCTS})`,
+        `(${buildBrowserSearch.toString()})(${JSON.stringify(input)}, ${MAX_PRODUCTS})`,
       );
 
-      if (!result || !Array.isArray(result.products)) {
-        throw new Error(`Rakatookyang browser returned an invalid result. URL: ${result?.url ?? "unknown"}`);
+      if (!result) {
+        throw new Error("Rakatookyang returned no browser result. The page may still be loading or its script failed.");
+      }
+      if (result.error) {
+        throw new Error(`Rakatookyang browser error: ${result.error} URL: ${result.url ?? BASE_URL}`);
       }
       if (result.status === "blocked") {
-        throw new Error(`Rakatookyang blocked browser access. URL: ${result.url ?? "unknown"}`);
+        throw new Error(`Rakatookyang blocked browser access. URL: ${result.url ?? BASE_URL}`);
+      }
+      if (!Array.isArray(result.products)) {
+        throw new Error(`Rakatookyang returned an invalid product result. URL: ${result.url ?? BASE_URL}`);
       }
       if (result.products.length === 0) {
-        throw new Error(`Rakatookyang returned 0 products. URL: ${result.url ?? "unknown"} Title: ${result.title ?? "unknown"}`);
+        throw new Error(
+          `Rakatookyang returned 0 products. URL: ${result.url ?? BASE_URL} Title: ${result.title ?? "unknown"}`,
+        );
       }
 
       return result.products.map((item, index) => ({
@@ -79,7 +90,7 @@ export class RakatookyangProvider implements ProductProvider {
 
 async function buildBrowserSearch(query: string, maxProducts: number): Promise<BrowserSearchResult> {
   const state = () => ({ url: location.href, title: document.title });
-  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/.test(text.toLowerCase());
+  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/i.test(text);
   const clean = (value: string) => value.replace(/\s+/g, " ").trim();
   const priceFrom = (value: string): number | undefined => {
     const match = value.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? value.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
@@ -88,86 +99,110 @@ async function buildBrowserSearch(query: string, maxProducts: number): Promise<B
     return Number.isFinite(number) ? number : undefined;
   };
 
-  if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
-    return { ...state(), status: "blocked", products: [] };
-  }
-
-  // Accept any user-supplied URL/query. The site may expose a search box, a
-  // product lookup box, or a normal form. Do not require a specific URL shape.
-  const input = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input, textarea"))
-    .find((element) => /search|ค้นหา|keyword|query|url|ลิงก์|link|สินค้า/i.test(
-      `${element.placeholder} ${element.name} ${element.id} ${element.getAttribute("aria-label") ?? ""}`,
-    ));
-
-  if (input) {
-    input.focus();
-    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-    if (setter) setter.call(input, query);
-    else input.value = query;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-
-    const form = input.closest("form");
-    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
-      Array.from(document.querySelectorAll<HTMLButtonElement>("button")).find((button) => /ค้นหา|search|ตรวจ|เช็ก|check|submit/i.test(button.innerText || button.getAttribute("aria-label") || ""));
-    if (button) button.click();
-    else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
-    await new Promise((resolve) => setTimeout(resolve, 4500));
-  }
-
-  const body = document.body?.innerText ?? "";
-  if (blocked(body)) return { ...state(), status: "blocked", products: [] };
-
-  const products: BrowserProduct[] = [];
-  const seen = new Set<string>();
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], a[href]"));
-
-  for (const element of candidates) {
-    if (products.length >= maxProducts) break;
-    const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
-    const url = link?.href;
-    if (!url || seen.has(url)) continue;
-    const text = clean(element.innerText || link?.innerText || "");
-    if (text.length < 3) continue;
-    const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
-    const name = clean(nameElement?.innerText || link?.innerText || "");
-    if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
-
-    const price = priceFrom(text);
-    const discountMatch = text.match(/(\d{1,2})\s*%/);
-    const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
-    const image = element.querySelector<HTMLImageElement>("img")?.src;
-    seen.add(url);
-    products.push({
-      name,
-      ...(price !== undefined ? { price } : {}),
-      ...(discountMatch ? { discount: Number(discountMatch[1]) } : {}),
-      ...(ratingMatch ? { rating: Number(ratingMatch[1]) } : {}),
-      ...(image ? { image } : {}),
-      url,
-    });
-  }
-
-  // Also support pages whose result is exposed through JSON-LD.
-  if (!products.length) {
-    for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'))) {
-      try {
-        const value = JSON.parse(script.textContent || "null");
-        const list = Array.isArray(value) ? value : [value];
-        for (const item of list) {
-          if (!item || typeof item !== "object" || String(item["@type"]).toLowerCase() !== "product") continue;
-          const name = typeof item.name === "string" ? clean(item.name) : "";
-          const url = typeof item.url === "string" ? new URL(item.url, location.href).href : location.href;
-          if (!name) continue;
-          const offers = item.offers && typeof item.offers === "object" ? item.offers : undefined;
-          const rawPrice = offers && typeof offers.price !== "undefined" ? String(offers.price) : "";
-          const numericPrice = Number(rawPrice.replace(/,/g, ""));
-          products.push({ name, url, ...(Number.isFinite(numericPrice) ? { price: numericPrice } : {}) });
-          if (products.length >= maxProducts) break;
-        }
-      } catch { /* ignore malformed JSON-LD */ }
+  try {
+    if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) {
+      return { ...state(), status: "blocked", products: [] };
     }
-  }
 
-  return { ...state(), status: products.length ? "ready" : "empty", products };
+    const fields = Array.from(
+      document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLElement>(
+        "input, textarea, [contenteditable='true']",
+      ),
+    );
+    const field = fields.find((element) =>
+      /search|ค้นหา|keyword|query|url|ลิงก์|link|สินค้า|product/i.test(
+        `${element.getAttribute("placeholder") ?? ""} ${element.getAttribute("name") ?? ""} ${element.id} ${element.getAttribute("aria-label") ?? ""}`,
+      ),
+    ) ?? fields.find((element) => {
+      const type = element instanceof HTMLInputElement ? element.type : "";
+      return !["hidden", "submit", "button"].includes(type);
+    });
+
+    if (field) {
+      field.focus();
+      if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
+        const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(field), "value")?.set;
+        if (setter) setter.call(field, query);
+        else field.value = query;
+      } else {
+        field.textContent = query;
+      }
+      field.dispatchEvent(new Event("input", { bubbles: true }));
+      field.dispatchEvent(new Event("change", { bubbles: true }));
+
+      const form = field.closest("form");
+      const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
+        Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
+          .find((button) => /ค้นหา|เช็กราคา|เช็ค|ตรวจ|เช็ก|search|check|submit|price/i.test(button.innerText || button.getAttribute("aria-label") || ""));
+
+      if (button) button.click();
+      else if (form) form.requestSubmit();
+      else field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+
+      const startedAt = Date.now();
+      while (Date.now() - startedAt < 10000) {
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        const body = document.body?.innerText ?? "";
+        if (blocked(body)) return { ...state(), status: "blocked", products: [] };
+        if (/(฿|บาท|THB)\s*[\d,]+/i.test(body) || (location.href !== "https://rakatookyang.com/" && location.href !== "https://rakatookyang.com")) break;
+      }
+    }
+
+    const body = document.body?.innerText ?? "";
+    if (blocked(body)) return { ...state(), status: "blocked", products: [] };
+
+    const products: BrowserProduct[] = [];
+    const seen = new Set<string>();
+    const candidates = Array.from(document.querySelectorAll<HTMLElement>("article, li, [class*='product'], [class*='item'], a[href]"));
+
+    for (const element of candidates) {
+      if (products.length >= maxProducts) break;
+      const link = element.matches("a[href]") ? element as HTMLAnchorElement : element.querySelector<HTMLAnchorElement>("a[href]");
+      const url = link?.href;
+      if (!url || seen.has(url)) continue;
+      const text = clean(element.innerText || link?.innerText || "");
+      if (text.length < 3) continue;
+      const nameElement = element.querySelector<HTMLElement>("h1,h2,h3,h4,h5,[class*='title'],[class*='name']");
+      const name = clean(nameElement?.innerText || link?.innerText || "");
+      if (name.length < 3 || /^(home|search|menu|login|เข้าสู่ระบบ)$/i.test(name)) continue;
+
+      const price = priceFrom(text);
+      const discountMatch = text.match(/(\d{1,2})\s*%/);
+      const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
+      const image = element.querySelector<HTMLImageElement>("img")?.src;
+      seen.add(url);
+      products.push({
+        name,
+        ...(price !== undefined ? { price } : {}),
+        ...(discountMatch ? { discount: Number(discountMatch[1]) } : {}),
+        ...(ratingMatch ? { rating: Number(ratingMatch[1]) } : {}),
+        ...(image ? { image } : {}),
+        url,
+      });
+    }
+
+    if (!products.length) {
+      for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]'))) {
+        try {
+          const value = JSON.parse(script.textContent || "null");
+          const list = Array.isArray(value) ? value : [value];
+          for (const item of list) {
+            if (!item || typeof item !== "object" || String(item["@type"]).toLowerCase() !== "product") continue;
+            const name = typeof item.name === "string" ? clean(item.name) : "";
+            const url = typeof item.url === "string" ? new URL(item.url, location.href).href : location.href;
+            if (!name) continue;
+            const offers = item.offers && typeof item.offers === "object" ? item.offers : undefined;
+            const rawPrice = offers && typeof offers.price !== "undefined" ? String(offers.price) : "";
+            const numericPrice = Number(rawPrice.replace(/,/g, ""));
+            products.push({ name, url, ...(Number.isFinite(numericPrice) ? { price: numericPrice } : {}) });
+            if (products.length >= maxProducts) break;
+          }
+        } catch { /* ignore malformed JSON-LD */ }
+      }
+    }
+
+    return { ...state(), status: products.length ? "ready" : "empty", products };
+  } catch (error) {
+    return { ...state(), status: "empty", products: [], error: error instanceof Error ? error.message : String(error) };
+  }
 }
