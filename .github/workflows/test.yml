@@ -16,6 +16,10 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+      - name: Install FFmpeg
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg
+      - name: Verify FFmpeg
+        run: ffmpeg -version
       - name: Core tests (no external providers)
         run: npm test
       - name: Gemini real API integration test
