@@ -3,6 +3,7 @@ import path from "node:path";
 import { AgentToolRuntime } from "./tool-runtime.js";
 import { browserTool } from "./browser-tool.js";
 import { OpenRouterBrain } from "./openrouter-brain.js";
+import { chooseRakatookyangAction } from "./autonomous-progress-guard.js";
 
 function loadLocalEnv() {
   const file = path.join(process.cwd(), ".env");
@@ -16,7 +17,6 @@ function loadLocalEnv() {
     if (process.env[key] === undefined) process.env[key] = value.replace(/^['"]|['"]$/g, "");
   }
 }
-
 loadLocalEnv();
 
 export type AgentAction = { type: "observe" | "plan" | "use_tool" | "analyze" | "decide" | "report"; thought: string; tool?: string; input?: unknown; result?: unknown };
@@ -26,12 +26,13 @@ export interface AgentBrain { decide(input: { goal: string; observation?: unknow
 
 class RuleBasedBrain implements AgentBrain {
   async decide(input: { goal: string; observation?: unknown; history: AgentAction[] }) {
-    const url = input.goal.match(/https?:\/\/\S+/)?.[0];
-    const lastTool = [...input.history].reverse().find((x) => x.type === "use_tool");
-    const failed = input.history.filter((x) => x.type === "analyze" && x.result && typeof x.result === "object" && "error" in x.result).length;
-    if (url && !lastTool) return { action: "use_tool" as const, tool: "browser", input: { action: "open", url }, reason: "The goal contains a URL that must be inspected." };
-    if (url && failed === 0) return { action: "use_tool" as const, tool: "browser", input: { action: "observe" }, reason: "Inspect the browser state before deciding what to do next." };
-    return { action: "finish" as const, reason: "No AI brain configured; finish with available evidence." };
+    const observation = input.observation as any;
+    const controls = Array.isArray(observation?.controls) ? observation.controls : [];
+    const lastBrowserAction = [...input.history].reverse().find(x => x.type === "use_tool" && x.tool === "browser")?.input as any;
+    const raka = chooseRakatookyangAction({ goal: input.goal, controls, lastBrowserAction });
+    if (raka) return { action: "use_tool" as const, tool: "browser", input: raka, reason: `RakaTookYang browser flow selected ${raka.action}.` };
+    if (lastBrowserAction?.action === "press" || lastBrowserAction?.action === "click") return { action: "use_tool" as const, tool: "browser", input: { action: "observe" }, reason: "Inspect the RakaTookYang result before finishing." };
+    return { action: "finish" as const, reason: "Browser flow completed with available evidence." };
   }
 }
 
@@ -67,7 +68,7 @@ export class CommercaAgent {
           lastError = "";
           observation = result;
           history.push({ type: "use_tool", thought: decision.reason, tool: decision.tool, input: decision.input, result });
-          history.push({ type: "analyze", thought: "Tool succeeded. Feed the result back to the AI before choosing the next action.", result });
+          history.push({ type: "analyze", thought: "Tool succeeded. Feed the result back before choosing the next action.", result });
         } catch (error) {
           lastError = error instanceof Error ? error.message : String(error);
           observation = { error: lastError, failedTool: decision.tool, failedInput: decision.input };
@@ -75,7 +76,9 @@ export class CommercaAgent {
         }
       }
       return { status: "failed", goal: task.goal, plan: history, report: lastError || "Agent reached its decision limit without proving the goal was accomplished.", model: this.brain instanceof OpenRouterBrain ? this.brain.getModel() : undefined };
-    } catch (error) { return { status: "failed", goal: task.goal, plan: history, report: error instanceof Error ? error.message : String(error), model: this.brain instanceof OpenRouterBrain ? this.brain.getModel() : undefined }; }
+    } catch (error) {
+      return { status: "failed", goal: task.goal, plan: history, report: error instanceof Error ? error.message : String(error), model: this.brain instanceof OpenRouterBrain ? this.brain.getModel() : undefined };
+    }
   }
 }
 export const agent = new CommercaAgent();
