@@ -37,7 +37,7 @@ function contentIntegrity(product: Product, content: ContentPackage): string[] {
   return issues;
 }
 function chooseRevisionStage(issues: string[]): QcReport["revisionStage"] {
-  if (issues.some((issue) => issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content-strategy";
+  if (issues.some((issue) => issue.includes("voice script") || issue.includes("subtitle script") || issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content-strategy";
   if (issues.some((issue) => issue.includes("creative") || issue.includes("storyboard"))) return "creative-strategy";
   return "production";
 }
