@@ -65,9 +65,9 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const a = rankProducts([s.product])[0];
     if (!a) throw new Error("Product analysis missing.");
     const content = live || process.env.COMMERCA_USE_GEMINI === "1" ? await generateContentWithGemini(a) : generateContent(a);
-    const url = s.product.url;
+    const url = s.product.affiliateUrl ?? s.product.url;
     if (!url) throw new Error("Product URL is required for publishing.");
-    return { artifacts: [artifact("content-strategy", "content-package", { ...content, productUrl: url, caption: content.caption.includes(url) ? content.caption : `${content.caption}\n\n🔗 ${url}` })] };
+    return { artifacts: [artifact("content-strategy", "content-package", { ...content, productUrl: url, subId: s.product.subId, caption: content.caption.includes(url) ? content.caption : `${content.caption}\n\n🔗 ${url}` })] };
   }));
   registry.register(new FunctionStage("creative-strategy", async c => {
     const content = latest<any>(c, "content-package");
@@ -106,7 +106,8 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
     const prod = latest<ProductionPackage>(c, "production-package");
     if (!p || !content || !creative || !prod) throw new Error("Final content package is incomplete.");
-    if (!p.url || content.productUrl !== p.url) throw new Error("Publishing blocked: product URL is missing or mismatched.");
+    const productUrl = p.affiliateUrl ?? p.url;
+    if (!productUrl || content.productUrl !== productUrl) throw new Error("Publishing blocked: affiliate product URL is missing or mismatched.");
     const videoPath = finalVideoPath(prod);
     if (!videoPath) throw new Error("Publishing blocked: final video is missing.");
 
@@ -116,28 +117,29 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
       caption: content.caption,
       hashtags: content.hashtags,
       callToAction: content.callToAction,
-      productUrl: p.url,
+      productUrl,
+      subId: p.subId,
       videoPath,
     };
 
     if (live) {
       const result = await publishToFacebookPage({
         videoPath,
-        caption: `${content.caption}\n\n${(content.hashtags ?? []).join(" ")}\n\n${content.callToAction ?? ""}\n🔗 ${p.url}`.trim(),
+        caption: `${content.caption}\n\n${(content.hashtags ?? []).join(" ")}\n\n${content.callToAction ?? ""}\n🔗 ${productUrl}`.trim(),
       });
       organic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink };
     }
 
     const publish = {
       organic,
-      ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url },
+      ads: { status: "ready", platform: "meta", videoPath, productUrl, subId: p.subId },
     };
     const finalPackage: FinalContentPackage = { product: p, content, creative, production: { ...prod, video: { path: videoPath } }, qc, publish };
     const dir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
     const path = process.env.COMMERCA_OUTPUT_PACKAGE ?? `${dir}/final-content-package.json`;
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(finalPackage, null, 2), "utf8");
-    await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${content.hashtags.join(" ")}\n\n${content.callToAction}\n🔗 ${p.url}\n`, "utf8");
+    await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${content.hashtags.join(" ")}\n\n${content.callToAction}\n🔗 ${productUrl}\n`, "utf8");
     return { artifacts: [artifact("publishing", "final-package", finalPackage), artifact("publishing", "publication", publish)] };
   }));
   registry.register(new FunctionStage("performance", async c => {
