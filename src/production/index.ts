@@ -8,7 +8,7 @@ import { renderFinalMp4 } from "./ffmpeg.js";
 import ffmpegStatic from "ffmpeg-static";
 
 const execFileAsync = promisify(execFile);
-export interface ProductionOptions { renderImage?: (prompt: string) => Promise<unknown>; renderVideo?: (prompt: string) => Promise<unknown>; generateVoice?: (text: string) => Promise<unknown>; generateSubtitle?: (text: string) => Promise<unknown>; edit?: (input: { image: unknown; video: unknown; voice: unknown; subtitle: unknown }) => Promise<unknown>; }
+export interface ProductionOptions { outputDir?: string; outputMp4?: string; renderImage?: (prompt: string) => Promise<unknown>; renderVideo?: (prompt: string) => Promise<unknown>; generateVoice?: (text: string) => Promise<unknown>; generateSubtitle?: (text: string) => Promise<unknown>; edit?: (input: { image: unknown; video: unknown; voice: unknown; subtitle: unknown }) => Promise<unknown>; }
 function filePath(value: unknown): string | undefined { if (typeof value === "string") return value; if (value && typeof value === "object" && "path" in value && typeof (value as { path?: unknown }).path === "string") return (value as { path: string }).path; return undefined; }
 async function materializeMedia(value: unknown, file: string): Promise<string | undefined> {
   if (typeof value === "string") return value;
@@ -21,9 +21,9 @@ async function materializeMedia(value: unknown, file: string): Promise<string | 
 }
 function resolveFfmpeg(): string { return process.env.FFMPEG_BIN?.trim() || ffmpegStatic || "ffmpeg"; }
 async function runLocalFfmpeg(args: string[]): Promise<void> { try { await execFileAsync(resolveFfmpeg(), args); } catch (error) { throw new Error(`Local FFmpeg production failed: ${error instanceof Error ? error.message : String(error)}`); } }
-async function produceLocalCreative(creative: CreativeStrategy, outputDir: string): Promise<ProductionPackage> {
+async function produceLocalCreative(creative: CreativeStrategy, outputDir: string, outputMp4?: string): Promise<ProductionPackage> {
   await mkdir(outputDir, { recursive: true });
-  const videoPath = join(outputDir, "video-1.mp4"), voicePath = join(outputDir, "voice.wav"), subtitlePath = join(outputDir, "subtitles.srt"), outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
+  const videoPath = join(outputDir, "video-1.mp4"), voicePath = join(outputDir, "voice.wav"), subtitlePath = join(outputDir, "subtitles.srt"), outputPath = outputMp4 ?? join(outputDir, "final.mp4");
   const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
   const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : creative.storyboard;
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=10", "-r", "30", "-pix_fmt", "yuv420p", videoPath]);
@@ -41,8 +41,8 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   if (live && !renderImage) throw new Error("Live production requires an image provider.");
   if (live && !renderVideo) throw new Error("Live production requires a video provider.");
   if (live && !generateVoice) throw new Error("Live production requires a voice provider.");
-  const outputDir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
-  if (!useGemini && !options.renderImage && !options.renderVideo && !options.generateVoice && !options.edit) return produceLocalCreative(creative, outputDir);
+  const outputDir = options.outputDir ?? process.env.COMMERCA_OUTPUT_DIR ?? "./output";
+  if (!useGemini && !options.renderImage && !options.renderVideo && !options.generateVoice && !options.edit) return produceLocalCreative(creative, outputDir, options.outputMp4);
   const rawImage = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const rawVideo = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
   const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
@@ -59,7 +59,7 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   let editing: unknown;
   if (options.edit) editing = await options.edit(editingInput);
   else if (useGemini) {
-    const videoPath = filePath(video[0]), voicePath = filePath(voice), outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
+    const videoPath = filePath(video[0]), voicePath = filePath(voice), outputPath = options.outputMp4 ?? join(outputDir, "final.mp4");
     if (!videoPath) throw new Error("Live production completed generation but no local video file was produced.");
     editing = { ...buildEditingManifest(editingInput), storyboard: creative.storyboard, voiceScript, subtitleScript, finalMp4: await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath }), status: "rendered" };
   } else editing = { storyboard: creative.storyboard, prompts: creative.prompt };
