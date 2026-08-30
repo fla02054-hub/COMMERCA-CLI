@@ -12,32 +12,25 @@ export interface RakatookyangPriceResult extends Product {
 
 export async function readRakatookyangPriceHistory(url: string): Promise<RakatookyangPriceResult> {
   const inputUrl = url.trim();
-  if (!/^https?:\/\/\S+$/i.test(inputUrl)) {
-    throw new Error("Rakatookyang requires a valid http:// or https:// URL.");
-  }
+  if (!/^https?:\/\/\S+$/i.test(inputUrl)) throw new Error("Rakatookyang requires a valid http:// or https:// URL.");
 
-  const browser = new BrowserController({ launchIfNeeded: true, headless: false });
+  const browser = new BrowserController({ launchIfNeeded: true, headless: false, useExistingChromeProfile: true });
   try {
     await browser.connect();
     await browser.open(BASE_URL);
-    await browser.wait(3500);
+    await browser.wait(5000);
 
     const result = await browser.evaluate<RakatookyangPageResult>(`(${submitAndRead.toString()})(${JSON.stringify(inputUrl)})`);
     if (!result) throw new Error("Rakatookyang returned no browser result.");
-    if (result.status === "blocked") {
-      throw new Error(`Rakatookyang blocked the request. URL: ${result.url ?? BASE_URL}`);
-    }
-    if (result.error) {
-      throw new Error(`Rakatookyang browser error: ${result.error} URL: ${result.url ?? BASE_URL}`);
-    }
-    if (!result.name && !result.price && !result.priceHistory?.length) {
-      throw new Error(`Rakatookyang did not return price data. URL: ${result.url ?? BASE_URL}`);
+    if (result.status === "blocked") throw new Error(`Rakatookyang blocked the request. URL: ${result.url ?? BASE_URL}`);
+    if (result.error) throw new Error(`Rakatookyang browser error: ${result.error} URL: ${result.url ?? BASE_URL}`);
+    if (!result.name && result.price === undefined && !result.priceHistory?.length) {
+      throw new Error(`Rakatookyang search completed without product data. URL: ${result.url ?? BASE_URL}`);
     }
 
     const history = result.priceHistory ?? [];
     const prices = history.map((item) => item.price).filter(Number.isFinite);
     if (result.price !== undefined) prices.push(result.price);
-
     const lowestPrice = prices.length ? Math.min(...prices) : undefined;
     const averagePrice = prices.length ? Math.round((prices.reduce((a, b) => a + b, 0) / prices.length) * 100) / 100 : undefined;
 
@@ -79,93 +72,101 @@ interface RakatookyangPageResult {
 
 async function submitAndRead(inputUrl: string): Promise<RakatookyangPageResult> {
   const state = () => ({ url: location.href, title: document.title });
-  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/i.test(text);
   const clean = (s: string) => s.replace(/\s+/g, " ").trim();
-  const price = (s: string): number | undefined => {
+  const blocked = (text: string) => /captcha|access denied|too many requests|\b429\b|cloudflare|verify you are human/i.test(text);
+  const parsePrice = (s: string): number | undefined => {
     const m = s.match(/(?:฿|THB|บาท)\s*([\d,]+(?:\.\d{1,2})?)/i) ?? s.match(/([\d,]+(?:\.\d{1,2})?)\s*(?:บาท|THB)/i);
     if (!m) return undefined;
     const n = Number(m[1].replace(/,/g, ""));
     return Number.isFinite(n) ? n : undefined;
   };
+  const collectJson = (raw: string, out: Record<string, unknown>[]) => {
+    try { const v = JSON.parse(raw); if (v && typeof v === "object") out.push(v); } catch { /* not JSON */ }
+  };
 
   try {
-    if (blocked(`${document.body?.innerText ?? ""} ${document.title}`)) return { status: "blocked", ...state() };
+    let text = document.body?.innerText ?? "";
+    if (blocked(`${text} ${document.title}`)) return { status: "blocked", ...state() };
 
-    const fields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement | HTMLElement>("input, textarea, [contenteditable='true']"));
-    const input = fields.find((el) => /shopee|ลิงก์|link|url|สินค้า|product|ค้นหา|search/i.test(
-      `${el.getAttribute("placeholder") ?? ""} ${el.getAttribute("name") ?? ""} ${el.id} ${el.getAttribute("aria-label") ?? ""}`,
-    )) ?? fields.find((el) => {
-      const type = el instanceof HTMLInputElement ? el.type : "";
-      return !["hidden", "submit", "button"].includes(type);
-    });
+    const allFields = Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>("input,textarea"));
+    const field = allFields.find((el) => /url|link|ลิงก์|สินค้า|product|shopee|ค้นหา|search/i.test(`${el.placeholder} ${el.name} ${el.id} ${el.getAttribute("aria-label") ?? ""}`))
+      ?? allFields.find((el) => !["hidden", "submit", "button"].includes(el.type));
+    if (!field) return { status: "empty", ...state(), error: "Rakatookyang input field was not found." };
 
-    if (!input) return { status: "empty", ...state(), error: "Rakatookyang input field was not found." };
+    field.focus();
+    const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+    if (field instanceof HTMLInputElement && setter) setter.call(field, inputUrl);
+    else field.value = inputUrl;
+    for (const type of ["input", "change", "blur"]) field.dispatchEvent(new Event(type, { bubbles: true }));
 
-    input.focus();
-    if (input instanceof HTMLInputElement || input instanceof HTMLTextAreaElement) {
-      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
-      if (setter) setter.call(input, inputUrl); else input.value = inputUrl;
-    } else {
-      input.textContent = inputUrl;
-    }
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-
-    const form = input.closest("form");
-    const button = form?.querySelector<HTMLButtonElement>('button[type="submit"],button') ??
-      Array.from(document.querySelectorAll<HTMLButtonElement>("button"))
-        .find((b) => /เช็กราคา|เช็ค|ตรวจ|เช็ก|ค้นหา|search|check|price|submit/i.test(b.innerText || b.getAttribute("aria-label") || ""));
+    const form = field.closest("form");
+    const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button,input[type=submit]"));
+    const button = buttons.find((b) => /เช็กราคา|เช็ค|ตรวจ|เช็ก|ค้นหา|search|check|price/i.test(clean(b.innerText || b.getAttribute("aria-label") || (b as HTMLInputElement).value || "")))
+      ?? form?.querySelector<HTMLButtonElement>("button[type=submit],input[type=submit]");
 
     if (button) button.click();
     else if (form) form.requestSubmit();
-    else input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
+    else field.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true }));
 
-    const startedAt = Date.now();
-    while (Date.now() - startedAt < 12000) {
+    const started = Date.now();
+    while (Date.now() - started < 30000) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      const text = document.body?.innerText ?? "";
-      if (blocked(text)) return { status: "blocked", ...state() };
-      if (/(฿|บาท|THB)\s*[\d,]+/i.test(text) || (location.href !== "https://rakatookyang.com/" && location.href !== "https://rakatookyang.com")) break;
+      text = document.body?.innerText ?? "";
+      if (blocked(`${text} ${document.title}`)) return { status: "blocked", ...state() };
+      const hasPrice = /(?:฿|บาท|THB)\s*[\d,]+/i.test(text);
+      const hasResultWords = /ราคาย้อนหลัง|ประวัติราคา|ราคาปัจจุบัน|ราคาต่ำสุด|price history|price tracker/i.test(text);
+      if (hasPrice || hasResultWords || location.href !== BASE_URL) break;
     }
 
-    const text = document.body?.innerText ?? "";
-    if (blocked(text)) return { status: "blocked", ...state() };
-
-    const bodyLines = text.split(/\n+/).map(clean).filter(Boolean);
+    text = document.body?.innerText ?? "";
     const prices: Array<{ date?: string; price: number }> = [];
-    for (const line of bodyLines) {
-      const p = price(line);
+    for (const line of text.split(/\n+/).map(clean).filter(Boolean)) {
+      const p = parsePrice(line);
       if (p !== undefined) {
         const date = line.match(/\b(\d{1,2}[\/\-.]\d{1,2}(?:[\/\-.]\d{2,4})?|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2})\b/)?.[1];
         if (!prices.some((x) => x.price === p && x.date === date)) prices.push({ ...(date ? { date } : {}), price: p });
       }
     }
 
-    // Rakatookyang may render chart data into scripts instead of visible text.
-    for (const script of Array.from(document.querySelectorAll<HTMLScriptElement>("script"))) {
-      const raw = script.textContent || "";
-      if (!/price|ราคา|history|ประวัติ/i.test(raw)) continue;
-      const matches = raw.match(/(?:price|ราคา)\s*[:=]\s*["']?([\d,]+(?:\.\d{1,2})?)/gi) ?? [];
-      for (const match of matches) {
-        const p = price(match);
-        if (p !== undefined && !prices.some((x) => x.price === p)) prices.push({ price: p });
+    // SPA sites often keep the result in JSON-LD or Next/Vite state rather than visible text.
+    const objects: Record<string, unknown>[] = [];
+    for (const el of Array.from(document.querySelectorAll<HTMLScriptElement>("script[type='application/ld+json'],script"))) {
+      const raw = el.textContent || "";
+      if (el.type === "application/ld+json") collectJson(raw, objects);
+      if (/price|ราคา|history|ประวัติ/i.test(raw)) {
+        for (const match of raw.matchAll(/(?:price|ราคา)\s*["']?\s*[:=]\s*["']?([\d,]+(?:\.\d{1,2})?)/gi)) {
+          const p = parsePrice(match[0]);
+          if (p !== undefined && !prices.some((x) => x.price === p)) prices.push({ price: p });
+        }
       }
     }
 
-    const heading = Array.from(document.querySelectorAll<HTMLElement>("h1,h2,h3,[class*='title'],[class*='product']"))
+    const flatten = (value: unknown): unknown[] => {
+      if (Array.isArray(value)) return value.flatMap(flatten);
+      if (value && typeof value === "object") return [value, ...Object.values(value as Record<string, unknown>).flatMap(flatten)];
+      return [];
+    };
+    for (const obj of objects.flatMap(flatten)) {
+      if (!obj || typeof obj !== "object") continue;
+      const r = obj as Record<string, unknown>;
+      const p = typeof r.price === "number" ? r.price : typeof r.price === "string" ? parsePrice(r.price) : undefined;
+      if (p !== undefined && !prices.some((x) => x.price === p)) prices.push({ price: p });
+    }
+
+    const name = Array.from(document.querySelectorAll<HTMLElement>("h1,h2,h3,[class*='title'],[class*='product']"))
       .map((el) => clean(el.innerText || ""))
-      .find((x) => x.length >= 5);
-    const currentPrice = price(text);
-    const discount = text.match(/(\d{1,2})\s*%/)?.[1];
-    const rating = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/)?.[1];
+      .find((x) => x.length >= 5 && !/ราคาถูก|เช็คราคา|RakaTookYang/i.test(x));
+    const currentPrice = parsePrice(text);
+    const discountMatch = text.match(/(\d{1,2})\s*%/);
+    const ratingMatch = text.match(/(?:★|⭐)\s*(\d(?:\.\d)?)/);
 
     return {
-      status: prices.length || currentPrice !== undefined ? "ready" : "empty",
+      status: prices.length || currentPrice !== undefined || !!name ? "ready" : "empty",
       ...state(),
-      ...(heading ? { name: heading } : {}),
+      ...(name ? { name } : {}),
       ...(currentPrice !== undefined ? { price: currentPrice } : {}),
-      ...(discount ? { discount: Number(discount) } : {}),
-      ...(rating ? { rating: Number(rating) } : {}),
+      ...(discountMatch ? { discount: Number(discountMatch[1]) } : {}),
+      ...(ratingMatch ? { rating: Number(ratingMatch[1]) } : {}),
       sourceUrl: inputUrl,
       priceHistory: prices,
     };
