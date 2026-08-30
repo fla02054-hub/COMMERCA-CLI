@@ -4,6 +4,7 @@ import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
+export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
@@ -27,12 +28,15 @@ function qcFailed(resultArtifacts: WorkflowArtifact[]): boolean {
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
   return typeof report === "object" && report !== null && "passed" in report && (report as { passed?: unknown }).passed === false;
 }
-export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
+
+export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
+  const pauseAfterQc = options.pauseAfterQc ?? false;
   let stage = workflow.state.currentStage; let guard = 0;
   while (guard++ < 100) {
     const state = workflow.state.stages[STAGE_ORDER[stage] - 1];
     if (!state) throw new Error(`Missing workflow state for stage: ${stage}`);
     if (state.status === "completed" || state.status === "skipped") {
+      if (stage === "qc" && pauseAfterQc && workflow.state.status === "awaiting-approval") return workflow;
       const next = WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) { workflow.state.status = "completed"; return workflow; }
       stage = next; continue;
@@ -47,6 +51,13 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
+      if (stage === "qc" && pauseAfterQc) {
+        workflow.state.currentStage = "qc";
+        workflow.state.status = "awaiting-approval";
+        workflow.state.approval = { requestedAt: new Date().toISOString() };
+        workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the final package, then approve to continue publishing." }, createdAt: new Date().toISOString() });
+        return workflow;
+      }
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
