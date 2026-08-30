@@ -24,11 +24,13 @@ async function runLocalFfmpeg(args: string[]): Promise<void> { try { await execF
 async function produceLocalCreative(creative: CreativeStrategy, outputDir: string): Promise<ProductionPackage> {
   await mkdir(outputDir, { recursive: true });
   const videoPath = join(outputDir, "video-1.mp4"), voicePath = join(outputDir, "voice.wav"), subtitlePath = join(outputDir, "subtitles.srt"), outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
+  const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
+  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : creative.storyboard;
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=10", "-r", "30", "-pix_fmt", "yuv420p", videoPath]);
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", "sine=frequency=880:duration=10", "-ar", "44100", voicePath]);
-  await writeFile(subtitlePath, buildSubtitle(creative.subtitleScript ?? ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"]), "utf8");
+  await writeFile(subtitlePath, buildSubtitle(subtitleScript.length ? subtitleScript : ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"]), "utf8");
   const finalMp4 = await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath });
-  return { image: creative.image, video: creative.video, voice: creative.voiceScript ?? [], subtitle: creative.subtitleScript ?? [], editing: { type: "editing-manifest", sequence: ["video", "voice", "subtitle"], storyboard: creative.storyboard, prompts: creative.prompt, finalMp4, status: "rendered", localVideoPath: videoPath, localVoicePath: voicePath, localSubtitlePath: subtitlePath } };
+  return { image: creative.image, video: creative.video, voice: voiceScript.join("\n"), subtitle: subtitleScript, editing: { type: "editing-manifest", sequence: ["video", "voice", "subtitle"], storyboard: creative.storyboard, prompts: creative.prompt, finalMp4, status: "rendered", localVideoPath: videoPath, localVoicePath: voicePath, localSubtitlePath: subtitlePath } };
 }
 export async function produceCreative(creative: CreativeStrategy, options: ProductionOptions = {}): Promise<ProductionPackage> {
   const live = process.env.COMMERCA_MODE === "live";
@@ -44,7 +46,7 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   const rawImage = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const rawVideo = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
   const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
-  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"];
+  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : creative.storyboard;
   const narration = voiceScript.join("\n");
   const rawVoice = generateVoice ? await generateVoice(narration) : narration;
   const subtitle = options.generateSubtitle ? await options.generateSubtitle(subtitleScript.join("\n")) : useGemini ? buildSubtitle(subtitleScript) : subtitleScript;
