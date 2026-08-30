@@ -1,5 +1,8 @@
+import { createReadStream } from "node:fs";
+
 export interface FacebookPublishInput {
   videoUrl?: string;
+  videoPath?: string;
   imageUrl?: string;
   caption: string;
   pageId?: string;
@@ -27,6 +30,19 @@ export async function publishToFacebookPage(input: FacebookPublishInput): Promis
   const graph = process.env.META_GRAPH_VERSION ?? "v23.0";
   const base = `https://graph.facebook.com/${graph}`;
 
+  if (input.videoPath) {
+    const form = new FormData();
+    form.append("source", new Blob([await new Response(createReadStream(input.videoPath) as any).arrayBuffer()], { type: "video/mp4" }), "video.mp4");
+    form.append("description", input.caption);
+    form.append("access_token", token);
+    const response = await fetch(`${base}/${encodeURIComponent(pageId)}/videos`, { method: "POST", body: form });
+    if (!response.ok) throw new Error(`Meta video upload failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
+    const result = await response.json() as { id?: string; post_id?: string };
+    const id = result.post_id ?? result.id;
+    if (!id) throw new Error("Meta video publish returned no post id.");
+    return { provider: "meta", platform: "facebook", mediaType: "video", id };
+  }
+
   if (input.videoUrl) {
     const response = await fetch(`${base}/${encodeURIComponent(pageId)}/videos`, {
       method: "POST",
@@ -53,5 +69,5 @@ export async function publishToFacebookPage(input: FacebookPublishInput): Promis
     return { provider: "meta", platform: "facebook", mediaType: "photo", id };
   }
 
-  throw new Error("Facebook publishing requires a public videoUrl or imageUrl.");
+  throw new Error("Facebook publishing requires a local videoPath, public videoUrl, or imageUrl.");
 }
