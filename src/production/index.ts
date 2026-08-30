@@ -10,6 +10,11 @@ import ffmpegStatic from "ffmpeg-static";
 const execFileAsync = promisify(execFile);
 export interface ProductionOptions { outputDir?: string; outputMp4?: string; renderImage?: (prompt: string) => Promise<unknown>; renderVideo?: (prompt: string) => Promise<unknown>; generateVoice?: (text: string) => Promise<unknown>; generateSubtitle?: (text: string) => Promise<unknown>; edit?: (input: { image: unknown; video: unknown; voice: unknown; subtitle: unknown }) => Promise<unknown>; }
 function filePath(value: unknown): string | undefined { if (typeof value === "string") return value; if (value && typeof value === "object" && "path" in value && typeof (value as { path?: unknown }).path === "string") return (value as { path: string }).path; return undefined; }
+function requiredScripts(creative: CreativeStrategy): { voiceScript: string[]; subtitleScript: string[] } {
+  if (!Array.isArray(creative.voiceScript) || creative.voiceScript.length !== 5) throw new Error("Production requires exactly 5 voice-script lines from creative strategy.");
+  if (!Array.isArray(creative.subtitleScript) || creative.subtitleScript.length !== 5) throw new Error("Production requires exactly 5 subtitle-script lines from creative strategy.");
+  return { voiceScript: creative.voiceScript, subtitleScript: creative.subtitleScript };
+}
 async function materializeMedia(value: unknown, file: string): Promise<string | undefined> {
   if (typeof value === "string") return value;
   if (!value || typeof value !== "object") return undefined;
@@ -22,13 +27,12 @@ async function materializeMedia(value: unknown, file: string): Promise<string | 
 function resolveFfmpeg(): string { return process.env.FFMPEG_BIN?.trim() || ffmpegStatic || "ffmpeg"; }
 async function runLocalFfmpeg(args: string[]): Promise<void> { try { await execFileAsync(resolveFfmpeg(), args); } catch (error) { throw new Error(`Local FFmpeg production failed: ${error instanceof Error ? error.message : String(error)}`); } }
 async function produceLocalCreative(creative: CreativeStrategy, outputDir: string, outputMp4?: string): Promise<ProductionPackage> {
+  const { voiceScript, subtitleScript } = requiredScripts(creative);
   await mkdir(outputDir, { recursive: true });
   const videoPath = join(outputDir, "video-1.mp4"), voicePath = join(outputDir, "voice.wav"), subtitlePath = join(outputDir, "subtitles.srt"), outputPath = outputMp4 ?? join(outputDir, "final.mp4");
-  const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
-  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : creative.storyboard;
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", "color=c=black:s=720x1280:d=10", "-r", "30", "-pix_fmt", "yuv420p", videoPath]);
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", "sine=frequency=880:duration=10", "-ar", "44100", voicePath]);
-  await writeFile(subtitlePath, buildSubtitle(subtitleScript.length ? subtitleScript : ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"]), "utf8");
+  await writeFile(subtitlePath, buildSubtitle(subtitleScript), "utf8");
   const finalMp4 = await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath });
   return { image: creative.image, video: creative.video, voice: voiceScript.join("\n"), subtitle: subtitleScript, editing: { type: "editing-manifest", sequence: ["video", "voice", "subtitle"], storyboard: creative.storyboard, prompts: creative.prompt, finalMp4, status: "rendered", localVideoPath: videoPath, localVoicePath: voicePath, localSubtitlePath: subtitlePath } };
 }
@@ -38,6 +42,7 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   const renderImage = options.renderImage ?? (useGemini ? geminiImage : undefined);
   const renderVideo = options.renderVideo ?? (useGemini ? geminiVideo : undefined);
   const generateVoice = options.generateVoice ?? (useGemini ? geminiVoice : undefined);
+  const { voiceScript, subtitleScript } = requiredScripts(creative);
   if (live && !renderImage) throw new Error("Live production requires an image provider.");
   if (live && !renderVideo) throw new Error("Live production requires a video provider.");
   if (live && !generateVoice) throw new Error("Live production requires a voice provider.");
@@ -45,8 +50,6 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   if (!useGemini && !options.renderImage && !options.renderVideo && !options.generateVoice && !options.edit) return produceLocalCreative(creative, outputDir, options.outputMp4);
   const rawImage = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const rawVideo = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
-  const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
-  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : creative.storyboard;
   const narration = voiceScript.join("\n");
   const rawVoice = generateVoice ? await generateVoice(narration) : narration;
   const subtitle = options.generateSubtitle ? await options.generateSubtitle(subtitleScript.join("\n")) : useGemini ? buildSubtitle(subtitleScript) : subtitleScript;
