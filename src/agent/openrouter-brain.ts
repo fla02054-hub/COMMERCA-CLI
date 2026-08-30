@@ -1,6 +1,6 @@
 import type { AgentAction, AgentBrain } from "./index.js";
 import { OPENROUTER_URL, selectFreeModels, type ModelInfo } from "./openrouter-model.js";
-import { chooseSearchAction } from "./autonomous-progress-guard.js";
+import { chooseRakatookyangAction, chooseSearchAction } from "./autonomous-progress-guard.js";
 
 type BrowserControl = { tag: string; role: string; name: string; placeholder: string; selector: string };
 
@@ -12,8 +12,7 @@ export class OpenRouterBrain implements AgentBrain {
   private async ensureModels() {
     if (!this.apiKey) throw new Error("OPENROUTER_API_KEY is required for the autonomous AI brain.");
     if (this.models.length) return;
-    const configured = (process.env.OPENROUTER_MODELS ?? process.env.OPENROUTER_MODEL ?? "")
-      .split(",").map((x) => x.trim()).filter(Boolean);
+    const configured = (process.env.OPENROUTER_MODELS ?? process.env.OPENROUTER_MODEL ?? "").split(",").map((x) => x.trim()).filter(Boolean);
     this.models = configured.length ? configured.map((id) => ({ id })) : await selectFreeModels(this.apiKey);
     if (!this.models.length) throw new Error("No OpenRouter models are configured or available.");
   }
@@ -24,14 +23,19 @@ export class OpenRouterBrain implements AgentBrain {
     const controls: BrowserControl[] = Array.isArray(observation?.controls) ? observation.controls : [];
     const hasObservation = Boolean(observation && !observation.error);
     const lastBrowserAction = [...input.history].reverse().find((x) => x.type === "use_tool" && x.tool === "browser")?.input as any;
+
+    // Product-link research must happen through the real browser on RakaTookYang.
+    // This deterministic bootstrap prevents the LLM from opening the source marketplace URL.
+    const rakaAction = chooseRakatookyangAction({ goal: input.goal, controls, lastBrowserAction });
+    if (rakaAction) return { action: "use_tool" as const, tool: "browser", input: rakaAction, reason: `RakaTookYang browser flow selected ${rakaAction.action}.` };
+
     const forced = hasObservation ? chooseSearchAction({ goal: input.goal, controls, lastBrowserAction }) : undefined;
     if (forced) return { action: "use_tool" as const, tool: "browser", input: forced, reason: `Autonomous progress guard selected ${forced.action}.` };
 
     const actionEnum = hasObservation ? ["click", "type", "press", "scroll", "find", "extract"] : ["open", "observe", "click", "type", "press", "scroll", "find", "extract"];
-    const tools = [{ type: "function", function: { name: "browser", description: "Execute one browser action in real Chrome.", parameters: {
+    const tools = [{ type: "function", function: { name: "browser", description: "Execute one browser action in real Google Chrome.", parameters: {
       type: "object", additionalProperties: false,
-      properties: { action: { type: "string", enum: actionEnum }, url: { type: "string" }, selector: { type: "string" }, text: { type: "string" }, key: { type: "string" }, amount: { type: "number" } },
-      required: ["action"]
+      properties: { action: { type: "string", enum: actionEnum }, url: { type: "string" }, selector: { type: "string" }, text: { type: "string" }, key: { type: "string" }, amount: { type: "number" } }, required: ["action"]
     } } }];
 
     let lastFailure = "";
@@ -42,7 +46,7 @@ export class OpenRouterBrain implements AgentBrain {
           Authorization: `Bearer ${this.apiKey}`, "Content-Type": "application/json",
           "HTTP-Referer": "https://github.com/fla02054-hub/COMMERCA-CLI", "X-Title": "COMMERCA Autonomous Agent"
         }, body: JSON.stringify({ model: model.id, temperature: 0, max_tokens: 500, tools, tool_choice: "required", messages: [
-          { role: "system", content: "You are an autonomous browser agent. Return exactly one executable browser tool call. Never choose observe when an observation already exists. Use only selectors supplied by observation. Continue until the goal is verifiably achieved." },
+          { role: "system", content: "You are an autonomous browser agent controlling real Google Chrome. For product-link research, if the goal mentions RakaTookYang/rakatookyang.com and contains a product URL, NEVER open the product URL. Open https://rakatookyang.com/, inspect its controls, put the product URL into its search/link field, submit it, wait for results, then extract the resulting product/price evidence. Use only selectors supplied by observation. Continue until the goal is verifiably achieved." },
           { role: "user", content: JSON.stringify({ goal: input.goal, page: hasObservation ? { url: observation.url, title: observation.title, text: observation.text?.slice(0, 12000) } : null, controls: controls.slice(0, 80), lastBrowserAction: lastBrowserAction || null, history: input.history.slice(-16) }) }
         ] }) });
         if (!response.ok) throw new Error(`${response.status} ${await response.text()}`);
