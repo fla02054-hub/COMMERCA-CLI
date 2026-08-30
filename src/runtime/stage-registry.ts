@@ -14,9 +14,7 @@ import type { ContentPackage } from "../content/index.js";
 import type { CreativeStrategy, ProductionPackage, FinalContentPackage, QcReport, PublicationRecord, PerformanceReport } from "./stage-artifacts.js";
 
 function latest<T>(context: StageContext, type: string): T | undefined { return [...context.artifacts].reverse().find((item) => item.type === type)?.data as T | undefined; }
-
 export interface StageRegistryOptions { product?: Product; production?: (creative: CreativeStrategy) => Promise<ProductionPackage>; }
-
 function finalVideoPath(production: ProductionPackage): string | undefined {
   const e = production.editing;
   if (e && typeof e === "object" && "finalMp4" in e && typeof (e as any).finalMp4 === "string") return (e as any).finalMp4;
@@ -24,7 +22,6 @@ function finalVideoPath(production: ProductionPackage): string | undefined {
   if (v && typeof v === "object" && "path" in v && typeof (v as any).path === "string") return (v as any).path;
   return typeof v === "string" ? v : undefined;
 }
-
 function contentIntegrity(product: Product, content: ContentPackage): string[] {
   const issues: string[] = [];
   if (!content.title || content.title.length > 70) issues.push("content title is missing or too long");
@@ -39,11 +36,9 @@ function contentIntegrity(product: Product, content: ContentPackage): string[] {
   if (content.subtitleScript?.length !== 5) issues.push("subtitle script must contain exactly 5 lines");
   return issues;
 }
-
 export function createStageRegistry(options: StageRegistryOptions = {}): WorkflowStageRegistry {
   const registry = new WorkflowStageRegistry();
   const live = process.env.COMMERCA_MODE === "live";
-
   registry.register(new FunctionStage("goal", async c => ({ artifacts: [artifact("goal", "goal", { text: c.goal })] })));
   registry.register(new FunctionStage("product-input", async () => {
     const p = options.product;
@@ -84,9 +79,10 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
   registry.register(new FunctionStage("creative-strategy", async c => {
     const content = latest<ContentPackage>(c, "content-package");
     if (!content) throw new Error("Creative strategy requires content package.");
-    const issues = validateCreativeStrategy(buildCreativeStrategy(content));
+    const creative = buildCreativeStrategy(content);
+    const issues = validateCreativeStrategy(creative);
     if (issues.length) throw new Error(`Creative strategy validation failed: ${issues.join("; ")}`);
-    return { artifacts: [artifact("creative-strategy", "creative-strategy", buildCreativeStrategy(content))] };
+    return { artifacts: [artifact("creative-strategy", "creative-strategy", creative)] };
   }));
   registry.register(new FunctionStage("production", async c => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
@@ -100,20 +96,14 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const production = latest<ProductionPackage>(c, "production-package");
     const issues: string[] = [];
     if (!p || !content || !creative || !production) issues.push("final package inputs are incomplete");
-    if (p && content) {
-      if (content.productUrl !== p.url) issues.push("product URL mismatch");
-      issues.push(...contentIntegrity(p, content));
-    }
+    if (p && content) { if (content.productUrl !== p.url) issues.push("product URL mismatch"); issues.push(...contentIntegrity(p, content)); }
     if (creative) issues.push(...validateCreativeStrategy(creative));
     const v = production ? finalVideoPath(production) : undefined;
     if (!production?.image) issues.push("missing image output");
     if (!v) issues.push("missing final video output");
     if (!production?.voice) issues.push("missing voice output");
     if (!production?.subtitle) issues.push("missing subtitle output");
-    if (v) {
-      try { if ((await stat(v)).size < 1000) issues.push("final video file is empty or invalid"); }
-      catch { if (live) issues.push("final video file does not exist"); }
-    }
+    if (v) { try { if ((await stat(v)).size < 1000) issues.push("final video file is empty or invalid"); } catch { if (live) issues.push("final video file does not exist"); } }
     return { artifacts: [artifact("qc", "qc-report", { passed: issues.length === 0, issues } satisfies QcReport)] };
   }));
   registry.register(new FunctionStage("publishing", async c => {
@@ -127,19 +117,17 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     if (!p.url || content.productUrl !== p.url) throw new Error("Publishing blocked: product URL is missing or mismatched.");
     const videoPath = finalVideoPath(prod);
     if (!videoPath) throw new Error("Publishing blocked: final video is missing.");
-    const organic: Record<string, unknown> = { status: live ? "publishing" : "ready", platform: "facebook", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: p.url, firstComment: content.firstComment, videoPath };
+    const firstComment = content.firstComment ?? `🛒 พิกัดสินค้า 👇\n🔗 ${p.url}`;
+    const organic: Record<string, unknown> = { status: live ? "publishing" : "ready", platform: "facebook", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: p.url, firstComment, videoPath };
     let publishedOrganic = organic;
-    if (live) {
-      const result = await publishToFacebookPage({ videoPath, caption: content.caption });
-      publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink };
-    }
+    if (live) { const result = await publishToFacebookPage({ videoPath, caption: content.caption }); publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink }; }
     const publish = { organic: publishedOrganic, ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url } };
-    const finalPackage: FinalContentPackage = { product: p, content, creative, production: { ...prod, video: { path: videoPath } }, qc, publish };
+    const finalPackage: FinalContentPackage = { product: p, content: { ...content, firstComment }, creative, production: { ...prod, video: { path: videoPath } }, qc, publish };
     const dir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
     const path = process.env.COMMERCA_OUTPUT_PACKAGE ?? `${dir}/final-content-package.json`;
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(finalPackage, null, 2), "utf8");
-    await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${content.firstComment}\n`, "utf8");
+    await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${firstComment}\n`, "utf8");
     return { artifacts: [artifact("publishing", "final-package", finalPackage), artifact("publishing", "publication", publish)] };
   }));
   registry.register(new FunctionStage("performance", async c => {
