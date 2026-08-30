@@ -136,12 +136,21 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     return { artifacts: [artifact("publishing", "final-package", finalPackage), artifact("publishing", "publication", publish)] };
   }));
   registry.register(new FunctionStage("performance", async c => {
-    if (!latest<PublicationRecord>(c, "publication")) throw new Error("Performance requires publication.");
-    return { artifacts: [artifact("performance", "performance-report", { reach: 0, ctr: 0, cpc: 0, conversion: 0, commission: 0 } satisfies PerformanceReport)] };
+    const publication = latest<PublicationRecord>(c, "publication");
+    if (!publication) throw new Error("Performance requires publication.");
+    return { artifacts: [artifact("performance", "performance-report", { reach: 0, ctr: 0, cpc: 0, conversion: 0, commission: 0, source: "no-live-metrics" } satisfies PerformanceReport)] };
   }));
   registry.register(new FunctionStage("decision-learning", async c => {
-    if (!latest<PerformanceReport>(c, "performance-report")) throw new Error("Decision requires performance data.");
-    return { artifacts: [artifact("decision-learning", "decision", { outcome: "optimize", actions: ["collect real metrics", "re-evaluate product and content"] })] };
+    const performance = latest<PerformanceReport>(c, "performance-report");
+    const publication = latest<PublicationRecord>(c, "publication");
+    const product = latest<Product>(c, "product-input");
+    if (!product) throw new Error("Decision-learning requires product input.");
+    const hasMetrics = Boolean(performance && (Number(performance.reach) > 0 || Number(performance.ctr) > 0 || Number(performance.cpc) > 0 || Number(performance.conversion) > 0 || Number(performance.commission) > 0));
+    return { artifacts: [artifact("decision-learning", "decision", {
+      outcome: hasMetrics ? "optimize" : "await-real-performance-data",
+      evidence: hasMetrics ? performance : { source: "no-live-metrics", publicationReady: Boolean(publication), productId: product.id },
+      actions: hasMetrics ? ["analyze real metrics", "select the best optimization target", "re-run the affected content/creative stage"] : ["keep the tested package", "wait for real performance metrics before making an optimization decision"],
+    })] };
   }));
   for (const stage of WORKFLOW_STAGES) if (!registry.has(stage)) throw new Error(`Missing workflow stage handler: ${stage}`);
   return registry;
