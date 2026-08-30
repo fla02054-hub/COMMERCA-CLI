@@ -5,7 +5,7 @@ export { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 export { createStageRegistry } from "./stage-registry.js";
 export { createRuntimeWorkflow, executeWorkflow } from "./flow.js";
 export type { RuntimeWorkflow, ExecuteWorkflowOptions } from "./flow.js";
-export { runAutonomousAgent } from "./autonomous-agent.js";
+export { runAutonomousAgent, resumeAutonomousAgent } from "./autonomous-agent.js";
 export type { AutonomousAgentOptions, AutonomousAgentResult } from "./autonomous-agent.js";
 
 import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow, type ExecuteWorkflowOptions } from "./flow.js";
