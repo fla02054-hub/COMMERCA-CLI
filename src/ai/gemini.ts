@@ -16,11 +16,15 @@ function validateContent(value: unknown, product: Product): ContentPackage {
   for (const field of ["title", "hook", "body", "callToAction"]) {
     if (typeof item[field] !== "string" || !item[field].trim()) throw new Error(`Gemini content missing ${field}.`);
   }
+  if (!Array.isArray(item.hashtags) || item.hashtags.length === 0 || item.hashtags.some((tag) => typeof tag !== "string" || !tag.trim())) {
+    throw new Error("Gemini content missing hashtags.");
+  }
   return {
     title: item.title as string,
     hook: item.hook as string,
     body: item.body as string,
     callToAction: item.callToAction as string,
+    hashtags: item.hashtags as string[],
     ...(product.url ? { productUrl: product.url } : {}),
   };
 }
@@ -35,7 +39,8 @@ export async function generateContentWithGemini(
   const fetchImpl = options.fetchImpl ?? fetch;
   const prompt = [
     "Create a Thai-language ecommerce affiliate content package for the selected product.",
-    "Return ONLY valid JSON with exactly these string fields: title, hook, body, callToAction.",
+    "Return ONLY valid JSON with exactly these fields: title, hook, body, callToAction, hashtags.",
+    "title, hook, body and callToAction must be strings. hashtags must be an array of 4-8 strings.",
     "Do not invent product facts. Use only the supplied product and analysis.",
     JSON.stringify({ product: analysis.product, reasons: analysis.reasons, score: analysis.score }),
   ].join("\n");
