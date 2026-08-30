@@ -25,6 +25,15 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
     state.status = "pending"; delete state.startedAt; delete state.completedAt; delete state.error;
   }
 }
+export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "decision-learning"): RuntimeWorkflow {
+  if (workflow.state.status !== "completed" && workflow.state.status !== "failed") return workflow;
+  resetForRevision(workflow, startStage);
+  workflow.state.status = "running";
+  workflow.state.currentStage = startStage;
+  workflow.state.approval = undefined;
+  workflow.artifacts.push({ stage: startStage, type: "agent-reopened-cycle", data: { reason: "Autonomous agent is taking ownership of the next optimization cycle.", startStage }, createdAt: new Date().toISOString() });
+  return workflow;
+}
 function qcReport(resultArtifacts: WorkflowArtifact[]): { passed?: unknown; revisionStage?: WorkflowStage } | undefined {
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
   return typeof report === "object" && report !== null ? report as { passed?: unknown; revisionStage?: WorkflowStage } : undefined;
@@ -69,7 +78,6 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the final package, then approve to continue publishing." }, createdAt: new Date().toISOString() });
         return workflow;
       }
-
       let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (autonomous && options.decideNextStage) {
         const decision = await options.decideNextStage(stage, workflow);
@@ -79,9 +87,7 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
           return workflow;
         }
         if (decision.nextStage && transitionAllowed(stage, decision.nextStage)) next = decision.nextStage;
-        if (decision.action === "revise" && decision.nextStage && transitionAllowed(stage, decision.nextStage)) {
-          resetForRevision(workflow, decision.nextStage); next = decision.nextStage;
-        }
+        if ((decision.action === "revise" || decision.action === "optimize") && decision.nextStage && transitionAllowed(stage, decision.nextStage)) { resetForRevision(workflow, decision.nextStage); next = decision.nextStage; }
         if (decision.action === "publish" && transitionAllowed(stage, "publishing")) next = "publishing";
       }
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
