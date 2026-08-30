@@ -1,0 +1,1 @@
+QC approval gate coverage is implemented in test/approval-gate.test.ts.
