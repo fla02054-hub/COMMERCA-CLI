@@ -3,6 +3,7 @@ import { readShopeeProductDetail, searchRakatookyangProduct } from "../product/i
 import { agent } from "../agent/index.js";
 
 const args = process.argv.slice(2);
+const TEST_PRODUCT_URL = "https://s.shopee.co.th/2qUA6EnWAX";
 
 if (args[0] === "agent" && args[1] === "run") {
   const goal = args.slice(2).join(" ");
@@ -34,8 +35,14 @@ if (args[0] === "product" && args[1] === "search" && args[2] === "rakatookyang")
   process.exit(0);
 }
 
+if (args[0] === "product" && args[1] === "test") {
+  console.log(JSON.stringify(await searchRakatookyangProduct(TEST_PRODUCT_URL), null, 2));
+  process.exit(0);
+}
+
 console.log("COMMERCA-CLI");
 console.log("  agent run <goal>");
 console.log("  workflow run <goal>");
 console.log("  product detail <url>");
 console.log("  product search rakatookyang <product-url>");
+console.log("  product test");
