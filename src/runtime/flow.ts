@@ -6,7 +6,7 @@ import type { StageContext } from "./stage-contract.js";
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: ["product-discovery"], "product-discovery": ["product-research"], "product-research": ["market-research"],
+  goal: ["product-input"], "product-input": ["product-research"], "product-research": ["market-research"],
   "market-research": ["product-analysis"], "product-analysis": ["product-scoring"], "product-scoring": ["product-selection"],
   "product-selection": ["content-strategy"], "content-strategy": ["creative-strategy"], "creative-strategy": ["production"],
   production: ["qc"], qc: ["publishing", "creative-strategy", "production", "content-strategy"], publishing: ["performance"],
@@ -50,7 +50,6 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       workflow.artifacts.push(...result.artifacts);
       state.artifactTypes.push(...result.artifacts.map((item) => item.type));
 
-      // A failed QC report is a workflow gate. Publishing can never execute after QC failure.
       if (stage === "qc" && qcFailed(result.artifacts) && !result.nextStage) {
         state.status = "failed";
         state.error = "QC failed; revision is required before publishing.";
