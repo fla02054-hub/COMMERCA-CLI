@@ -13,7 +13,8 @@ function failed(workflow: Awaited<ReturnType<typeof runWorkflowWithProduct>>): n
 function valueAfter(flag: string): string | undefined {
   const index = args.indexOf(flag);
   if (index < 0) return undefined;
-  return args[index + 1];
+  const value = args[index + 1];
+  return value && !value.startsWith("--") ? value : undefined;
 }
 
 function valuesAfter(flag: string): string[] {
@@ -53,34 +54,29 @@ if (args[0] === "workflow" && args[1] === "run" && args[2] === "--fixture" && ar
   failed(workflow);
 }
 
-if (args[0] === "workflow" && args[1] === "run" && args[2] === "--product") {
-  const name = args[3];
-  const positionalPrice = args[4];
-  const positionalUrl = args[5];
-  const positionalImage = args[6];
-
-  const price = parsePrice(valueAfter("--price") ?? positionalPrice, "Product price");
+if (args[0] === "workflow" && args[1] === "run" && args.includes("--product")) {
+  const name = valueAfter("--product");
+  const price = parsePrice(valueAfter("--price"), "Special price");
   const originalPrice = parsePrice(valueAfter("--original-price"), "Original price");
-  const url = valueAfter("--url") ?? positionalUrl;
-  const image = valueAfter("--image") ?? positionalImage;
+  const url = valueAfter("--url");
+  const image = valueAfter("--image");
   const suppliedImages = valuesAfter("--images");
 
-  if (!name || price === undefined || !url || !image) {
+  if (!name || price === undefined || originalPrice === undefined || !url || !image) {
     throw new Error(
-      "usage: workflow run --product <name> <price> <url> <image> [--original-price <price>] [--images <image1> <image2> ...]",
+      "usage: workflow run --product <name> --original-price <price> --price <special-price> --url <url> --image <image> [--images <image1> <image2> ...]",
     );
   }
 
-  if (originalPrice !== undefined && originalPrice < price) {
-    throw new Error("Original price cannot be lower than the sale price.");
+  if (originalPrice < price) {
+    throw new Error("Original price cannot be lower than the special price.");
   }
 
-  const allImages = [image, ...suppliedImages].filter(Boolean);
-  const images = [...new Set(allImages)];
-  const discount = originalPrice !== undefined && originalPrice > 0
+  const images = [...new Set([image, ...suppliedImages].filter(Boolean))];
+  const discount = originalPrice > 0
     ? Math.round(((originalPrice - price) / originalPrice) * 100)
-    : undefined;
-  const promotion = originalPrice !== undefined && originalPrice !== price
+    : 0;
+  const promotion = originalPrice !== price
     ? `ลดเหลือ ฿${price.toLocaleString("th-TH")} จากราคาปกติ ฿${originalPrice.toLocaleString("th-TH")}`
     : undefined;
 
@@ -111,6 +107,6 @@ if (args[0] === "product" && args[1] === "detail") {
 }
 
 console.log("COMMERCA-CLI");
-console.log("  workflow run --product <name> <price> <url> <image> [--original-price <price>] [--images <image1> <image2> ...]");
+console.log("  workflow run --product <name> --original-price <price> --price <special-price> --url <url> --image <image> [--images <image1> <image2> ...]");
 console.log("  workflow run --fixture ice-maker");
 console.log("  product detail <url>");
