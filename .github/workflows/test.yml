@@ -43,6 +43,16 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.5-flash-lite
         run: node --import tsx --test test/gemini.integration.test.ts
+      - name: Assemble post-ready package
+        if: success()
+        run: |
+          set -e
+          mkdir -p /tmp/commerca-publish-package
+          cp /tmp/commerca-final-package/final-content-package.json /tmp/commerca-publish-package/final-content-package.json
+          MP4=$(find /tmp -maxdepth 2 -type f -path '/tmp/commerca-production-*/final.mp4' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)
+          test -n "$MP4"
+          cp "$MP4" /tmp/commerca-publish-package/final.mp4
+          node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/commerca-publish-package/final-content-package.json","utf8")); p.production.video.path="final.mp4"; fs.writeFileSync("/tmp/commerca-publish-package/publish-package.json",JSON.stringify(p,null,2)); fs.writeFileSync("/tmp/commerca-publish-package/post.txt",[p.content.caption,...(p.content.hashtags||[]),p.content.callToAction,p.content.productUrl].join("\n\n"));'
       - name: Upload final content package
         if: always()
         uses: actions/upload-artifact@v7
@@ -57,3 +67,10 @@ jobs:
           name: production-render-test
           path: /tmp/commerca-production-*/final.mp4
           if-no-files-found: ignore
+      - name: Upload POST READY package
+        if: success()
+        uses: actions/upload-artifact@v7
+        with:
+          name: publish-package
+          path: /tmp/commerca-publish-package
+          if-no-files-found: error
