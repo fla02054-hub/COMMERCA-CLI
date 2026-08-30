@@ -1,8 +1,13 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import type { CreativeStrategy, ProductionPackage } from "../runtime/stage-artifacts.js";
 import { buildEditingManifest, buildSubtitle, geminiImage, geminiVideo, geminiVoice } from "./gemini.js";
 import { renderFinalMp4 } from "./ffmpeg.js";
+import ffmpegStatic from "ffmpeg-static";
+
+const execFileAsync = promisify(execFile);
 
 export interface ProductionOptions {
   renderImage?: (prompt: string) => Promise<unknown>;
@@ -38,6 +43,52 @@ async function materializeMedia(value: unknown, file: string): Promise<string | 
   return filePath(value);
 }
 
+function resolveFfmpeg(): string {
+  return process.env.FFMPEG_BIN?.trim() || ffmpegStatic || "ffmpeg";
+}
+
+async function runLocalFfmpeg(args: string[]): Promise<void> {
+  try {
+    await execFileAsync(resolveFfmpeg(), args);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Local FFmpeg production failed: ${message}`);
+  }
+}
+
+/**
+ * Local production fallback used when no external generation provider is configured.
+ * It creates real media files with the bundled FFmpeg binary, so downstream QC and
+ * publishing exercise the same file-based contracts as live production.
+ */
+async function produceLocalCreative(creative: CreativeStrategy, outputDir: string): Promise<ProductionPackage> {
+  await mkdir(outputDir, { recursive: true });
+  const videoPath = join(outputDir, "video-1.mp4");
+  const voicePath = join(outputDir, "voice.wav");
+  const subtitlePath = join(outputDir, "subtitles.srt");
+  const outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
+
+  const duration = Math.max(2, Math.min(10, creative.storyboard.length || 2));
+  await runLocalFfmpeg([
+    "-y", "-f", "lavfi", "-i", `color=c=black:s=720x1280:d=${duration}`,
+    "-r", "30", "-pix_fmt", "yuv420p", videoPath,
+  ]);
+  await runLocalFfmpeg([
+    "-y", "-f", "lavfi", "-i", `sine=frequency=880:duration=${duration}`,
+    "-ar", "44100", voicePath,
+  ]);
+  await writeFile(subtitlePath, buildSubtitle(creative.storyboard), "utf8");
+  const finalMp4 = await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath });
+
+  return {
+    image: creative.image,
+    video: [videoPath],
+    voice: voicePath,
+    subtitle: subtitlePath,
+    editing: { ...buildEditingManifest({ image: creative.image, video: [videoPath], voice: voicePath, subtitle: subtitlePath }), finalMp4, status: "rendered" },
+  };
+}
+
 export async function produceCreative(creative: CreativeStrategy, options: ProductionOptions = {}): Promise<ProductionPackage> {
   const live = process.env.COMMERCA_MODE === "live";
   const useGemini = process.env.COMMERCA_PRODUCTION_PROVIDER === "gemini" || live;
@@ -48,13 +99,18 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
   if (live && !renderVideo) throw new Error("Live production requires a video provider.");
   if (live && !generateVoice) throw new Error("Live production requires a voice provider.");
 
+  const outputDir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
+
+  if (!useGemini && !options.renderImage && !options.renderVideo && !options.generateVoice && !options.edit) {
+    return produceLocalCreative(creative, outputDir);
+  }
+
   const rawImage = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const rawVideo = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
   const narration = creative.storyboard.join("\n");
   const rawVoice = generateVoice ? await generateVoice(narration) : narration;
   const subtitle = options.generateSubtitle ? await options.generateSubtitle(narration) : useGemini ? buildSubtitle(creative.storyboard) : creative.storyboard;
 
-  const outputDir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
   const image = useGemini ? await Promise.all(rawImage.map((value, i) => materializeMedia(value, join(outputDir, `image-${i + 1}.png`))) ) : rawImage;
   const video = useGemini ? await Promise.all(rawVideo.map((value, i) => materializeMedia(value, join(outputDir, `video-${i + 1}.mp4`))) ) : rawVideo;
   const voice = useGemini ? await materializeMedia(rawVoice, join(outputDir, "voice.wav")) : rawVoice;
