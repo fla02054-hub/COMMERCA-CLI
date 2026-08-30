@@ -43,6 +43,5 @@ test("Stage 12 rejects missing sales caption", () => {
 });
 
 test("Stage 12 rejects empty targets", () => {
-  const plan = buildPublicationPlan({ video: true }, { caption: "x", productUrl: "https://example.com/product", targets: [{ id: "", platform: "organic", destination: "" }] });
-  assert.ok(validatePublicationPlan(plan).length >= 2);
+  assert.throws(() => buildPublicationPlan({ video: { path: "/tmp/final.mp4" } }, { caption: "x", productUrl: "https://example.com/product", targets: [] }));
 });
