@@ -4,7 +4,7 @@ import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
-export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; }
+export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
