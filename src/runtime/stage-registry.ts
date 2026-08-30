@@ -125,9 +125,11 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
     const production = latest<ProductionPackage>(c, "production-package");
     if (!product || !content || !creative || !production) throw new Error("Final content package is incomplete.");
+    // Keep the publication record acyclic. The final package owns the publication
+    // plan; embedding the package back into the publication record would create a
+    // circular object and make JSON serialization fail at Stage 12.
     const publish: PublicationRecord = { organic: { status: "ready", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: content.productUrl }, ads: { status: "ready" } };
     const finalPackage: FinalContentPackage = { product, content, creative, production, qc, publish };
-    publish.finalPackage = finalPackage;
     const outputDir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
     const packagePath = process.env.COMMERCA_OUTPUT_PACKAGE ?? `${outputDir}/final-content-package.json`;
     await mkdir(dirname(packagePath), { recursive: true });
