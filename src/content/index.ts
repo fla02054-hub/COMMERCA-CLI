@@ -37,8 +37,15 @@ function money(value: number | undefined): string {
   return value === undefined ? "เช็กราคาล่าสุด" : `${value.toLocaleString("th-TH")}. -`;
 }
 
+function displayName(name: string): string {
+  return name
+    .replace(/^\s*[⚡🔥🎁]+\s*บริการรับประกัน\s*[⚡🔥🎁]+\s*/u, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function productHashtag(name: string): string {
-  const clean = name.replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 40);
+  const clean = displayName(name).replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 40);
   return clean ? `#${clean}` : "#โปรเด็ด";
 }
 
@@ -55,23 +62,18 @@ function categoryHashtag(name: string): string {
 export function buildContentStrategy(analysis: ProductAnalysis): ContentStrategy {
   const { product } = analysis;
   const productUrl = validateUrl(product.url);
+  const name = displayName(product.name);
   const price = money(product.price);
   const original = money(product.originalPrice);
-  const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : "มีโปรให้เช็ก";
-  const proof: string[] = [];
-  if (product.rating !== undefined) proof.push(`คะแนน ${product.rating}/5`);
-  if (product.reviewCount !== undefined) proof.push(`${product.reviewCount.toLocaleString("th-TH")} รีวิว`);
-  if (product.salesCount !== undefined) proof.push(`${product.salesCount.toLocaleString("th-TH")} ชิ้นขาย`);
-  const evidence = proof.join(" • ") || "ตรวจสอบรายละเอียดในหน้าสินค้า";
+  const discount = product.discount !== undefined ? `${product.discount}%` : "มีโปรให้เช็ก";
   const angles = ["ปัญหา/ความต้องการของคนซื้อ", "จุดเด่นและประโยชน์ของสินค้า", "ราคา โปร และหลักฐานความนิยม"];
   const hooks = [
-    `🔥 ${product.name} ราคานี้น่าสนใจ! จาก ${original} เหลือ ${price}`,
-    `👀 กำลังมองหา ${product.name}? เช็กดีลนี้ก่อน`,
-    `💥 ${product.name} มีโปรอยู่ตอนนี้ — ${price}`,
+    `🔥 ${name} ราคานี้น่าสนใจ! จาก ${original} เหลือ ${price}`,
+    `👀 กำลังมองหา ${name}? เช็กดีลนี้ก่อน`,
+    `💥 ${name} มีโปรอยู่ตอนนี้ — ${price}`,
   ];
-  const copyBrief = "เขียนโพสต์ Social Commerce ภาษาไทยแบบอ่านเร็ว: Hook จากปัญหาหรือความต้องการ → ชื่อสินค้า → จุดเด่น/หลักฐานจาก Product data เท่านั้น → ราคา/โปร → CTA ให้กดลิงก์ในคอมเมนต์แรก → Hashtags. ห้ามใส่ URL ใน Caption และห้ามแต่งข้อมูลสินค้า. ห้ามเปิดเผยข้อความหรือการวิเคราะห์ภายในระบบ เช่น good content potential, content potential, analysis, score หรือ reasoning.";
-  const callToAction = "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก";
-  return { angles, hooks, copyBrief, callToAction, productUrl };
+  const copyBrief = "เขียนโพสต์ Social Commerce ภาษาไทยแบบอ่านเร็ว โดยใช้ชื่อสินค้าแบบสั้นที่อ่านง่าย และข้อมูลจาก Product data เท่านั้น → ราคา/โปร → CTA ให้กดลิงก์ในคอมเมนต์แรก → Hashtags. ห้ามใส่ URL ใน Caption และห้ามแต่งข้อมูลสินค้า.";
+  return { angles, hooks, copyBrief, callToAction: "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก", productUrl };
 }
 
 export function validateContentStrategy(strategy: ContentStrategy): string[] {
@@ -87,14 +89,15 @@ export function validateContentStrategy(strategy: ContentStrategy): string[] {
 export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const { product } = analysis;
   const productUrl = validateUrl(product.url);
+  const name = displayName(product.name);
   const price = money(product.price);
   const original = product.originalPrice !== undefined ? money(product.originalPrice) : undefined;
   const promotion = product.promotion?.trim();
-  const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : undefined;
+  const discountPercent = product.discount !== undefined ? `${product.discount}%` : undefined;
 
   const hook = product.originalPrice !== undefined && product.price !== undefined
-    ? `🔥 ${product.name} ราคานี้น่าสนใจ!`
-    : `🔥 ${product.name} ใครกำลังมองหาอยู่ ลองดูตัวนี้ก่อน!`;
+    ? `🔥 ${name} ราคานี้น่าสนใจ!`
+    : `🔥 ${name} ใครกำลังมองหาอยู่ ลองดูตัวนี้ก่อน!`;
 
   const evidence: string[] = [];
   if (product.rating !== undefined) evidence.push(`⭐ คะแนน ${product.rating}/5`);
@@ -102,18 +105,18 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   if (product.salesCount !== undefined) evidence.push(`ขายแล้ว ${product.salesCount.toLocaleString("th-TH")} ชิ้น`);
 
   const featureLines = [
-    `🛍️ ${product.name}`,
+    `🛍️ ${name}`,
     evidence.length ? `✨ ${evidence.join(" • ")}` : undefined,
     promotion ? `🎁 ${promotion}` : undefined,
   ].filter(Boolean) as string[];
 
-  const priceLine = original && discount
-    ? `💥 จาก ${original} เหลือเพียง ${price} | ${discount}`
+  const priceLine = original
+    ? `💥 จาก ${original} เหลือเพียง ${price}${discountPercent ? ` | ลด ${discountPercent}` : ""}`
     : `💰 ราคา ${price}`;
   const callToAction = "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก";
   const hashtags = [productHashtag(product.name), categoryHashtag(product.name), "#Shopee", "#ShopeeSale", "#โปรเด็ด"];
   const body = [
-    `กำลังมองหา ${product.name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ 👀`,
+    `กำลังมองหา ${name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ 👀`,
     ...featureLines,
     priceLine,
     callToAction,
@@ -122,34 +125,22 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
 
   const caption = `${hook}\n\n${body}`;
   const firstComment = `🛒 พิกัดสินค้า 👇\n🔗 ${productUrl}`;
-
   const voiceScript = [
-    `🔥 ${product.name} ราคานี้น่าสนใจ!`,
-    `กำลังมองหา ${product.name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ`,
-    `จุดเด่นและรายละเอียดของ ${product.name} ดูได้จากข้อมูลสินค้าที่ระบุไว้`,
-    original && discount ? `จาก ${original} เหลือเพียง ${price} ${discount}` : `ตอนนี้ราคา ${price}`,
+    `🔥 ${name} ราคานี้น่าสนใจ!`,
+    `กำลังมองหา ${name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ`,
+    `ดูจุดเด่นและรายละเอียดของ ${name} จากข้อมูลสินค้าที่ระบุไว้`,
+    original ? `จาก ${original} เหลือเพียง ${price}${discountPercent ? ` ลด ${discountPercent}` : ""}` : `ตอนนี้ราคา ${price}`,
     "สนใจสินค้า กดลิงก์ในคอมเมนต์แรก",
   ];
   const subtitleScript = [
-    `🔥 ${product.name}`,
-    `เช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ`,
+    `🔥 ${name}`,
+    "เช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ",
     `ดูจุดเด่นและรายละเอียดสินค้า`,
-    original && discount ? `จาก ${original} เหลือ ${price}` : `ราคา ${price}`,
+    original ? `จาก ${original} เหลือ ${price}` : `ราคา ${price}`,
     "👇 กดลิงก์ในคอมเมนต์แรก",
   ];
 
-  return {
-    title: product.name,
-    hook,
-    body,
-    caption,
-    callToAction,
-    hashtags,
-    productUrl,
-    firstComment,
-    voiceScript,
-    subtitleScript,
-  };
+  return { title: name, hook, body, caption, callToAction, hashtags, productUrl, firstComment, voiceScript, subtitleScript };
 }
 
 export function validateProductForContent(product: Product): string[] {
