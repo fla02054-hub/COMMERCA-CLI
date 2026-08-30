@@ -15,7 +15,6 @@ jobs:
         with:
           node-version: 24
           cache: npm
-      # Keep CI installable while package.json/package-lock are being normalized.
       - run: npm install
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg
@@ -24,49 +23,45 @@ jobs:
       - name: Core tests (no external providers)
         run: npm test
       - name: Stage 10 Production real MP4 render test
-        run: node --import tsx --test test/production.render.e2e.test.ts
+        if: success()
+        run: npm run test:production
       - name: Stage 11 QC real MP4 gate
-        run: node --import tsx --test test/qc.final-mp4.e2e.test.ts
+        if: success()
+        run: npm run test:qc
       - name: Stage 12 Publishing gate
-        run: node --import tsx --test test/publishing.test.ts
+        if: success()
+        run: npm run test:publishing
       - name: Final Content Package E2E artifact test
-        env:
-          COMMERCA_OUTPUT_DIR: /tmp/commerca-final-package
-          COMMERCA_OUTPUT_PACKAGE: /tmp/commerca-final-package/final-content-package.json
-        run: node --import tsx --test test/final-content-package.e2e.test.ts
+        if: success()
+        run: npm run test:final-package
       - name: Stage 13 Performance gate
-        run: node --import tsx --test test/performance.test.ts
+        if: success()
+        run: npm run test:performance
       - name: Stage 14 Decision and Learning gate
-        run: node --import tsx --test test/decision.test.ts
+        if: success()
+        run: npm run test:decision
       - name: Gemini real API integration test
+        if: success() && env.GEMINI_API_KEY != ''
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-          GEMINI_MODEL: gemini-3.5-flash-lite
-        run: node --import tsx --test test/gemini.integration.test.ts
+        run: npm run test:gemini
       - name: Assemble post-ready package
         if: success()
-        run: |
-          set -e
-          mkdir -p /tmp/commerca-publish-package
-          cp /tmp/commerca-final-package/final-content-package.json /tmp/commerca-publish-package/final-content-package.json
-          MP4=$(find /tmp -maxdepth 2 -type f -path '/tmp/commerca-production-*/final.mp4' -printf '%T@ %p\n' | sort -nr | head -n1 | cut -d' ' -f2-)
-          test -n "$MP4"
-          cp "$MP4" /tmp/commerca-publish-package/final.mp4
-          node -e 'const fs=require("fs"); const p=JSON.parse(fs.readFileSync("/tmp/commerca-publish-package/final-content-package.json","utf8")); p.production.video.path="final.mp4"; fs.writeFileSync("/tmp/commerca-publish-package/publish-package.json",JSON.stringify(p,null,2)); fs.writeFileSync("/tmp/commerca-publish-package/post.txt",[p.content.caption,...(p.content.hashtags||[]),p.content.callToAction,p.content.productUrl].join("\n\n"));'
+        run: npm run package:publish
       - name: Upload final content package
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v7
         with:
           name: final-content-package
           path: /tmp/commerca-final-package/final-content-package.json
           if-no-files-found: error
       - name: Upload rendered MP4 test artifact
-        if: always()
+        if: success()
         uses: actions/upload-artifact@v7
         with:
           name: production-render-test
           path: /tmp/commerca-production-*/final.mp4
-          if-no-files-found: ignore
+          if-no-files-found: error
       - name: Upload POST READY package
         if: success()
         uses: actions/upload-artifact@v7
