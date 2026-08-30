@@ -4,7 +4,7 @@ import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
-export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; }
+export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; autonomous?: boolean; maxAutonomousRevisions?: number; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
@@ -24,13 +24,16 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
     state.status = "pending"; delete state.startedAt; delete state.completedAt; delete state.error;
   }
 }
-function qcFailed(resultArtifacts: WorkflowArtifact[]): boolean {
+function qcReport(resultArtifacts: WorkflowArtifact[]): { passed?: unknown; revisionStage?: WorkflowStage } | undefined {
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
-  return typeof report === "object" && report !== null && "passed" in report && (report as { passed?: unknown }).passed === false;
+  return typeof report === "object" && report !== null ? report as { passed?: unknown; revisionStage?: WorkflowStage } : undefined;
 }
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
   const pauseAfterQc = options.pauseAfterQc ?? false;
+  const autonomous = options.autonomous ?? false;
+  const maxAutonomousRevisions = Math.max(0, options.maxAutonomousRevisions ?? 3);
+  let autonomousRevisions = 0;
   let stage = workflow.state.currentStage; let guard = 0;
   while (guard++ < 100) {
     const state = workflow.state.stages[STAGE_ORDER[stage] - 1];
@@ -47,7 +50,19 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const context: StageContext = { workflowId: workflow.id, goal: workflow.goal, stage, artifacts: workflow.artifacts };
       const result = await registry.get(stage).execute(context);
       workflow.artifacts.push(...result.artifacts); state.artifactTypes.push(...result.artifacts.map((item) => item.type));
-      if (stage === "qc" && qcFailed(result.artifacts) && !result.nextStage) {
+      const report = stage === "qc" ? qcReport(result.artifacts) : undefined;
+      if (stage === "qc" && report?.passed === false && !result.nextStage) {
+        const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content-strategy";
+        if (autonomous && autonomousRevisions < maxAutonomousRevisions) {
+          autonomousRevisions += 1;
+          state.status = "completed";
+          state.completedAt = new Date().toISOString();
+          workflow.artifacts.push({ stage: "qc", type: "agent-decision", data: { action: "revise", revision: autonomousRevisions, nextStage: revisionStage, issues: report ? [report] : [] }, createdAt: new Date().toISOString() });
+          workflow.state.status = "running";
+          resetForRevision(workflow, revisionStage);
+          stage = revisionStage;
+          continue;
+        }
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
