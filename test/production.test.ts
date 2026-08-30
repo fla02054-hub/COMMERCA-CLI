@@ -8,6 +8,8 @@ const creative: CreativeStrategy = {
   video: ["video prompt"],
   storyboard: ["scene 1", "scene 2"],
   prompt: ["master prompt"],
+  voiceScript: ["voice 1", "voice 2", "voice 3", "voice 4", "voice 5"],
+  subtitleScript: ["sub 1", "sub 2", "sub 3", "sub 4", "sub 5"],
 };
 
 test("production executes image, video, voice, subtitle and editing adapters", async () => {
@@ -24,13 +26,11 @@ test("production executes image, video, voice, subtitle and editing adapters", a
   assert.equal(result.subtitle, "subtitle://1");
   assert.deepEqual(result.editing, { storyboard: creative.storyboard, prompts: creative.prompt });
   assert.equal(calls.length, 5);
+  assert.equal(calls.find((call) => call.startsWith("voice:"))?.includes("scene 1"), false);
+  assert.equal(calls.find((call) => call.startsWith("subtitle:"))?.includes("scene 1"), false);
 });
 
-test("production preserves the creative contract when adapters are not configured", async () => {
-  const result = await produceCreative(creative);
-  assert.deepEqual(result.image, creative.image);
-  assert.deepEqual(result.video, creative.video);
-  assert.equal(result.voice, creative.storyboard.join("\n"));
-  assert.deepEqual(result.subtitle, creative.storyboard);
-  assert.deepEqual(result.editing, { storyboard: creative.storyboard, prompts: creative.prompt });
+test("production refuses to fall back from missing scripts to storyboard", async () => {
+  const incomplete = { ...creative, voiceScript: undefined, subtitleScript: undefined };
+  await assert.rejects(() => produceCreative(incomplete), /exactly 5 voice-script lines/);
 });
