@@ -11,22 +11,15 @@ import { createStageRegistry } from "./stage-registry.js";
 import { searchRakatookyangProduct } from "../product/index.js";
 
 const URL_PATTERN = /https?:\/\/\S+/i;
-const RAKATOOKYANG_HOST = /(^|\.)rakatookyang\.com$/i;
 
-function rakatookyangUrlFromGoal(goal: string): string | undefined {
-  const url = goal.match(URL_PATTERN)?.[0]?.replace(/[),.!?]+$/g, "");
-  if (!url) return undefined;
-  try {
-    return RAKATOOKYANG_HOST.test(new URL(url).hostname) ? url : undefined;
-  } catch {
-    return undefined;
-  }
+function productUrlFromGoal(goal: string): string | undefined {
+  return goal.match(URL_PATTERN)?.[0]?.replace(/[),.!?]+$/g, "");
 }
 
 /** Single public entry point for the 14-stage COMMERCA workflow. */
 export async function runWorkflow(goal: string): Promise<RuntimeWorkflow> {
   const workflow = createRuntimeWorkflow(goal);
-  const productUrl = rakatookyangUrlFromGoal(workflow.goal);
+  const productUrl = productUrlFromGoal(workflow.goal);
   const registry = productUrl
     ? createStageRegistry({ discoverProducts: async () => [await searchRakatookyangProduct(productUrl)] })
     : createStageRegistry();
