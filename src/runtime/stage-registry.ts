@@ -65,20 +65,35 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     if (!product?.name || typeof product.price !== "number" || !product.url || images.length === 0) throw new Error("Manual product input requires name, price, url and at least one image.");
     return { artifacts: [artifact("product-input", "product-input", { ...product, image: product.image ?? images[0], images })] } satisfies StageResult;
   }));
+
   registry.register(new FunctionStage("product-research", async (c) => {
     const product = latest<Product>(c, "product-input");
     if (!product) throw new Error("Product research requires manual product input.");
+
+    // A manually supplied product is already a valid product record. Live
+    // Shopee enrichment is best-effort: failure to attach Chrome or read the
+    // listing must not discard the user's product or stop the whole workflow.
     const researcher = options.researchProduct ?? (live ? async (item: Product) => {
       if (!item.url) return item;
       const detail = await readShopeeProductDetail(item.url);
       return preserveDirectProduct(item, detail);
     } : async (item: Product) => item);
+
     try {
       const researched = preserveDirectProduct(product, await researcher(product));
       return { artifacts: [artifact("product-research", "product-profile", { products: [researched], researchErrors: [] })] };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(`Product research enrichment skipped; continuing with supplied product: ${message}`);
+      return {
+        artifacts: [artifact("product-research", "product-profile", {
+          products: [product],
+          researchErrors: [{ productId: product.id, error: message }],
+        })],
+      };
     }
-    catch (error) { if (live) throw error; return { artifacts: [artifact("product-research", "product-profile", { products: [product], researchErrors: [{ productId: product.id, error: error instanceof Error ? error.message : String(error) }] })] }; }
   }));
+
   registry.register(new FunctionStage("market-research", async (c) => {
     const profile = latest<{ products: Product[] }>(c, "product-profile"); const product = profile?.products?.[0];
     if (!product) throw new Error("Market research requires researched product.");
@@ -89,7 +104,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const products = latest<{ products: Product[] }>(c, "product-profile")?.products ?? []; if (!products.length) throw new Error("Product analysis requires researched products.");
     const analysis = rankProducts(products); const market = latest<{ evidence?: unknown }>(c, "market-evidence")?.evidence;
     return { artifacts: [artifact("product-analysis", "product-analysis", analysis.map((item) => ({ ...item, marketEvidence: market ?? null })))] };
-  }));
+  });
   registry.register(new FunctionStage("product-scoring", async (c) => {
     const analysis = latest<ReturnType<typeof rankProducts>>(c, "product-analysis") ?? []; if (!analysis.length) throw new Error("Product scoring requires analysis.");
     return { artifacts: [artifact("product-scoring", "scorecard", scoreProducts(analysis))] };
@@ -112,11 +127,9 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
   });
   registry.register(new FunctionStage("production", async (c) => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy"); if (!creative) throw new Error("Production requires creative strategy.");
-    // Production is deliberately delegated to the real production subsystem.
-    // The workflow registry must not manufacture a fake final video just to satisfy QC.
     const production = options.production ? await options.production(creative) : await produceCreative(creative);
     return { artifacts: [artifact("production", "production-package", production)] };
-  }));
+  });
   registry.register(new FunctionStage("qc", async (c) => {
     const production = latest<ProductionPackage>(c, "production-package"); if (!production) throw new Error("QC requires production package.");
     const issues: string[] = []; const videoPath = finalVideoPath(production);
