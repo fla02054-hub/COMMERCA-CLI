@@ -15,6 +15,15 @@ export interface ProductionPackage {
   editing?: unknown;
 }
 
+export interface FinalContentPackage {
+  product: unknown;
+  content: unknown;
+  creative: CreativeStrategy;
+  production: ProductionPackage;
+  qc: QcReport;
+  publish: PublicationRecord;
+}
+
 export interface QcReport {
   passed: boolean;
   issues: string[];
@@ -23,6 +32,7 @@ export interface QcReport {
 export interface PublicationRecord {
   organic?: unknown;
   ads?: unknown;
+  finalPackage?: FinalContentPackage;
 }
 
 export interface PerformanceReport {
@@ -43,6 +53,7 @@ export type TypedStageArtifact =
   | WorkflowArtifact<{ text: string }>
   | WorkflowArtifact<CreativeStrategy>
   | WorkflowArtifact<ProductionPackage>
+  | WorkflowArtifact<FinalContentPackage>
   | WorkflowArtifact<QcReport>
   | WorkflowArtifact<PublicationRecord>
   | WorkflowArtifact<PerformanceReport>
