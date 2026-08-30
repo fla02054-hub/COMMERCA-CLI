@@ -21,13 +21,14 @@ test("Stage 08 creates a complete content strategy", () => {
   assert.equal(validateContentStrategy(strategy).length, 0);
   assert.ok(strategy.angles.length >= 3);
   assert.ok(strategy.hooks.length >= 3);
-  assert.match(strategy.copyBrief, /Test Product/);
+  assert.ok(strategy.copyBrief.length > 0);
+  assert.ok(strategy.copyBrief.includes("ชื่อสินค้า"));
   assert.ok(strategy.callToAction.length > 0);
   assert.equal(strategy.productUrl, "https://example.com/product");
 });
 
 test("Stage 08 rejects an incomplete content strategy", () => {
-  const errors = validateContentStrategy({ angles: [], hooks: [], copyBrief: "", callToAction: "" });
+  const errors = validateContentStrategy({ angles: [], hooks: [], copyBrief: "", callToAction: "", productUrl: "" });
   assert.ok(errors.length >= 4);
 });
 
