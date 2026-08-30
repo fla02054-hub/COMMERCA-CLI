@@ -25,7 +25,7 @@ function finalVideoPath(production: ProductionPackage): string | undefined {
   const e = production.editing;
   if (e && typeof e === "object" && "finalMp4" in e && typeof (e as any).finalMp4 === "string") return (e as any).finalMp4;
   const v = production.video;
-  if (v && typeof v === "object'" && "path" in v && typeof (v as any).path === "string") return (v as any).path;
+  if (v && typeof v === "object" && "path" in v && typeof (v as any).path === "string") return (v as any).path;
   return typeof v === "string" ? v : undefined;
 }
 
