@@ -59,7 +59,9 @@ function latestArtifacts(artifacts: WorkflowArtifact[]): WorkflowArtifact[] {
 async function askAgent(stage: WorkflowStage, product: Product, artifacts: WorkflowArtifact[], options: AutonomousAgentOptions): Promise<AgentDecision> {
   const apiKey = options.apiKey ?? process.env.GEMINI_API_KEY;
   const allowed = allowedNextStages(stage);
-  const fallback: AgentDecision = { action: allowed.length ? "continue" : "stop", nextStage: allowed[0], reason: "No AI decision provider configured; continue using the safe workflow transition.", confidence: 0.5 };
+  const fallback: AgentDecision = stage === "decision-learning"
+    ? { action: "stop", reason: "No AI decision provider configured; stop after the current learning cycle.", confidence: 0.5 }
+    : { action: allowed.length ? "continue" : "stop", nextStage: allowed[0], reason: "No AI decision provider configured; continue using the safe workflow transition.", confidence: 0.5 };
   if (!apiKey) return fallback;
 
   const model = options.model ?? process.env.GEMINI_MODEL ?? DEFAULT_MODEL;
@@ -70,7 +72,8 @@ async function askAgent(stage: WorkflowStage, product: Product, artifacts: Workf
     "Analyze the product and latest artifacts, then decide the best next action.",
     "Never invent facts. If evidence is insufficient, choose the safest valid continuation.",
     "For QC failures, choose the stage that should be revised based on the issues.",
-    "For performance/decision-learning, choose optimize or stop when supported by evidence.",
+    "For performance/decision-learning, decide whether to optimize, publish, or stop based on evidence.",
+    "At decision-learning, choose stop when there is no evidence that another iteration is better.",
     "Return ONLY JSON: {action, nextStage, reason, confidence}.",
     `Current stage: ${stage}`,
     `Allowed next stages: ${JSON.stringify(allowed)}`,
@@ -84,7 +87,7 @@ async function askAgent(stage: WorkflowStage, product: Product, artifacts: Workf
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }),
     });
-    if (!response.ok) return { ...fallback, reason: `AI decision request failed (${response.status}); safe continuation selected.` };
+    if (!response.ok) return { ...fallback, reason: `AI decision request failed (${response.status}); safe decision selected.` };
     const payload = await response.json() as { candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }> };
     const text = payload.candidates?.[0]?.content?.parts?.map((part) => part.text ?? "").join("").trim();
     if (!text) return fallback;
@@ -94,7 +97,7 @@ async function askAgent(stage: WorkflowStage, product: Product, artifacts: Workf
     const confidence = typeof value.confidence === "number" && Number.isFinite(value.confidence) ? Math.min(1, Math.max(0, value.confidence)) : fallback.confidence;
     return { action, nextStage, reason: typeof value.reason === "string" && value.reason.trim() ? value.reason.trim() : fallback.reason, confidence };
   } catch {
-    return { ...fallback, reason: "AI decision could not be parsed; safe continuation selected." };
+    return { ...fallback, reason: "AI decision could not be parsed; safe decision selected." };
   }
 }
 
