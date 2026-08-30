@@ -29,6 +29,11 @@ jobs:
         run: node --import tsx --test test/qc.final-mp4.e2e.test.ts
       - name: Stage 12 Publishing gate
         run: node --import tsx --test test/publishing.test.ts
+      - name: Final Content Package E2E artifact test
+        env:
+          COMMERCA_OUTPUT_DIR: /tmp/commerca-final-package
+          COMMERCA_OUTPUT_PACKAGE: /tmp/commerca-final-package/final-content-package.json
+        run: node --import tsx --test test/final-content-package.e2e.test.ts
       - name: Stage 13 Performance gate
         run: node --import tsx --test test/performance.test.ts
       - name: Stage 14 Decision and Learning gate
@@ -38,6 +43,13 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_MODEL: gemini-3.5-flash-lite
         run: node --import tsx --test test/gemini.integration.test.ts
+      - name: Upload final content package
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: final-content-package
+          path: /tmp/commerca-final-package/final-content-package.json
+          if-no-files-found: error
       - name: Upload rendered MP4 test artifact
         if: always()
         uses: actions/upload-artifact@v7
