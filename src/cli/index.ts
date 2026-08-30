@@ -20,6 +20,7 @@ if (args[0] === "workflow" && args[1] === "run" && args[2] === "--fixture" && ar
     promotion: "ลดเหลือ ฿2,890 จากราคาปกติ ฿3,199",
     url: "https://s.shopee.co.th/6fgtBsfm7R",
     image: "fixture://ice-maker",
+    images: ["fixture://ice-maker"],
     source: "manual-fixture",
     discoveredAt: new Date().toISOString(),
   };
@@ -33,11 +34,18 @@ if (args[0] === "workflow" && args[1] === "run" && args[2] === "--product") {
   const priceText = args[4];
   const url = args[5];
   const image = args[6];
+  const imagesFlagIndex = args.indexOf("--images", 7);
+
   if (!name || !priceText || !url || !image) {
-    throw new Error("usage: workflow run --product <name> <price> <url> <image>");
+    throw new Error("usage: workflow run --product <name> <price> <url> <image> [--images <image1> <image2> ...]");
   }
+
   const price = Number(priceText.replace(/,/g, ""));
   if (!Number.isFinite(price) || price < 0) throw new Error("Product price must be a valid non-negative number.");
+
+  const images = imagesFlagIndex >= 0
+    ? args.slice(imagesFlagIndex + 1).filter((value) => value && !value.startsWith("--"))
+    : [image];
 
   const product: Product = {
     id: `manual-${crypto.randomUUID()}`,
@@ -45,6 +53,7 @@ if (args[0] === "workflow" && args[1] === "run" && args[2] === "--product") {
     price,
     url,
     image,
+    images,
     source: "manual",
     discoveredAt: new Date().toISOString(),
   };
@@ -62,6 +71,6 @@ if (args[0] === "product" && args[1] === "detail") {
 }
 
 console.log("COMMERCA-CLI");
-console.log("  workflow run --product <name> <price> <url> <image>");
+console.log("  workflow run --product <name> <price> <url> <image> [--images <image1> <image2> ...]");
 console.log("  workflow run --fixture ice-maker");
 console.log("  product detail <url>");
