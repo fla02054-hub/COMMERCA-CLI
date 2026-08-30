@@ -4,6 +4,7 @@ import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
+export interface ExecuteWorkflowOptions { stopAfterQc?: boolean; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
@@ -28,7 +29,7 @@ function qcReport(resultArtifacts: WorkflowArtifact[]): { passed: boolean } | un
   if (typeof report !== "object" || report === null || !("passed" in report)) return undefined;
   return report as { passed: boolean };
 }
-export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
+export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
   let stage = workflow.state.currentStage; let guard = 0;
   while (guard++ < 100) {
     const state = workflow.state.stages[STAGE_ORDER[stage] - 1];
@@ -49,7 +50,7 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
-      if (stage === "qc" && qc?.passed && !result.nextStage) {
+      if (stage === "qc" && qc?.passed && options.stopAfterQc && !result.nextStage) {
         workflow.state.currentStage = "qc";
         workflow.state.status = "awaiting_approval";
         return workflow;
