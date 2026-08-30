@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { generateContent } from "../src/content/index.js";
-import { buildCreativeStrategy, validateCreativeStrategy } from "../src/creative/index.js";
+import { buildCreativeStrategy } from "../src/creative/index.js";
 
 const product = {
   id: "manual-anchi-safety",
@@ -26,11 +26,10 @@ test("publish caption keeps URL in first comment only", () => {
 
 test("creative rejects internal analysis leakage", () => {
   const content = generateContent({ product } as any);
-  const creative = buildCreativeStrategy({
+  assert.throws(() => buildCreativeStrategy({
     ...content,
     body: `${content.body} good content potential.`,
-  });
-  assert.equal(validateCreativeStrategy(creative).some((error) => error.includes("internal analysis")), true);
+  }), /internal analysis text/);
 });
 
 test("creative remains anchored to the direct product identity", () => {
