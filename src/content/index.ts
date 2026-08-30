@@ -43,6 +43,7 @@ function productHashtag(name: string): string {
 function categoryHashtag(name: string): string {
   const lower = name.toLowerCase();
   if (/(รองเท้า|วิ่ง|sneaker|running)/i.test(lower)) return "#รองเท้าวิ่ง";
+  if (/(จักรยาน|electric.?bike|ebike|bike)/i.test(lower)) return "#จักรยานไฟฟ้า";
   if (/(แบต|power.?bank|ชาร์จ|charger)/i.test(lower)) return "#PowerBank";
   if (/(โลชั่น|ครีม|ผิว|skincare|body)/i.test(lower)) return "#ดูแลผิว";
   if (/(บ้าน|ครัว|เครื่องใช้|home)/i.test(lower)) return "#ของใช้ในบ้าน";
@@ -66,7 +67,7 @@ export function buildContentStrategy(analysis: ProductAnalysis): ContentStrategy
     `👀 กำลังมองหา ${product.name}? เช็กดีลนี้ก่อน`,
     `💥 ${product.name} มีโปรอยู่ตอนนี้ — ${price}`,
   ];
-  const copyBrief = "เขียนโพสต์ Social Commerce ภาษาไทยแบบอ่านเร็ว: Hook จากปัญหาหรือความต้องการ → ชื่อสินค้า → จุดเด่น/หลักฐานจาก Product data เท่านั้น → ราคา/โปร → CTA ให้กดลิงก์ในคอมเมนต์แรก → Hashtags. ห้ามใส่ URL ใน Caption และห้ามแต่งข้อมูลสินค้า.";
+  const copyBrief = "เขียนโพสต์ Social Commerce ภาษาไทยแบบอ่านเร็ว: Hook จากปัญหาหรือความต้องการ → ชื่อสินค้า → จุดเด่น/หลักฐานจาก Product data เท่านั้น → ราคา/โปร → CTA ให้กดลิงก์ในคอมเมนต์แรก → Hashtags. ห้ามใส่ URL ใน Caption และห้ามแต่งข้อมูลสินค้า. ห้ามเปิดเผยข้อความหรือการวิเคราะห์ภายในระบบ เช่น good content potential, content potential, analysis, score หรือ reasoning.";
   const callToAction = "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก";
   return { angles, hooks, copyBrief, callToAction, productUrl };
 }
@@ -90,8 +91,8 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : undefined;
 
   const hook = product.originalPrice !== undefined && product.price !== undefined
-    ? `🏠 **${product.name}** ราคาแบบนี้ น่าเก็บไว้ดูเลย!`
-    : `🔥 **${product.name}** ใครกำลังมองหาอยู่ ลองดูตัวนี้ก่อน!`;
+    ? `🔥 ${product.name} ราคานี้น่าสนใจ!`
+    : `🔥 ${product.name} ใครกำลังมองหาอยู่ ลองดูตัวนี้ก่อน!`;
 
   const evidence: string[] = [];
   if (product.rating !== undefined) evidence.push(`⭐ คะแนน ${product.rating}/5`);
@@ -99,18 +100,18 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   if (product.salesCount !== undefined) evidence.push(`ขายแล้ว ${product.salesCount.toLocaleString("th-TH")} ชิ้น`);
 
   const featureLines = [
-    `🛍️ **${product.name}**`,
+    `🛍️ ${product.name}`,
     evidence.length ? `✨ ${evidence.join(" • ")}` : undefined,
     promotion ? `🎁 ${promotion}` : undefined,
   ].filter(Boolean) as string[];
 
   const priceLine = original && discount
-    ? `💥 **จาก ${original} เหลือเพียง ${price}** | ${discount}`
-    : `💰 **ราคา ${price}**`;
-  const callToAction = "👇 **สนใจสินค้า กดลิงก์ในคอมเมนต์แรก**";
+    ? `💥 จาก ${original} เหลือเพียง ${price} | ${discount}`
+    : `💰 ราคา ${price}`;
+  const callToAction = "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก";
   const hashtags = [productHashtag(product.name), categoryHashtag(product.name), "#Shopee", "#ShopeeSale", "#โปรเด็ด"];
   const body = [
-    "กำลังหาของที่คุ้มราคาอยู่? ตัวนี้น่าลองเช็กก่อนตัดสินใจ 👀",
+    `กำลังมองหา ${product.name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ 👀`,
     ...featureLines,
     priceLine,
     callToAction,
@@ -118,7 +119,7 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   ].join("\n\n");
 
   const caption = `${hook}\n\n${body}`;
-  const firstComment = `🛒 **พิกัดสินค้า 👇**\n🔗 ${productUrl}`;
+  const firstComment = `🛒 พิกัดสินค้า 👇\n🔗 ${productUrl}`;
 
   return {
     title: product.name,
