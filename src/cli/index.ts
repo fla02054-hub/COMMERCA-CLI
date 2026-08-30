@@ -1,6 +1,9 @@
 import { runWorkflow, runWorkflowWithProduct } from "../runtime/index.js";
 import { readShopeeProductDetail, searchRakatookyangProduct } from "../product/index.js";
 import type { Product } from "../product/types.js";
+import { configureUtf8Console } from "./encoding.js";
+
+configureUtf8Console();
 
 const args = process.argv.slice(2);
 const TEST_PRODUCT_URL = "https://s.shopee.co.th/2qUA6EnWAX";
