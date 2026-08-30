@@ -17,10 +17,15 @@ function filePath(value: unknown): string | undefined {
 }
 
 export async function produceCreative(creative: CreativeStrategy, options: ProductionOptions = {}): Promise<ProductionPackage> {
-  const useGemini = process.env.COMMERCA_PRODUCTION_PROVIDER === "gemini";
+  const live = process.env.COMMERCA_MODE === "live";
+  const useGemini = process.env.COMMERCA_PRODUCTION_PROVIDER === "gemini" || live;
   const renderImage = options.renderImage ?? (useGemini ? geminiImage : undefined);
   const renderVideo = options.renderVideo ?? (useGemini ? geminiVideo : undefined);
   const generateVoice = options.generateVoice ?? (useGemini ? geminiVoice : undefined);
+  if (live && !renderImage) throw new Error("Live production requires an image provider.");
+  if (live && !renderVideo) throw new Error("Live production requires a video provider.");
+  if (live && !generateVoice) throw new Error("Live production requires a voice provider.");
+
   const image = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const video = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
   const narration = creative.storyboard.join("\n");
