@@ -1,5 +1,5 @@
 import { runWorkflow } from "../runtime/index.js";
-import { readShopeeProductDetail, readRakatookyangPriceHistory } from "../product/index.js";
+import { readShopeeProductDetail, searchRakatookyangProduct } from "../product/index.js";
 import { agent } from "../agent/index.js";
 
 const args = process.argv.slice(2);
@@ -27,10 +27,10 @@ if (args[0] === "product" && args[1] === "detail") {
   process.exit(0);
 }
 
-if (args[0] === "product" && args[1] === "price-history") {
-  const url = args[2];
-  if (!url) throw new Error("usage: product price-history <url>");
-  console.log(JSON.stringify(await readRakatookyangPriceHistory(url), null, 2));
+if (args[0] === "product" && args[1] === "search" && args[2] === "rakatookyang") {
+  const url = args[3];
+  if (!url) throw new Error("usage: product search rakatookyang <product-url>");
+  console.log(JSON.stringify(await searchRakatookyangProduct(url), null, 2));
   process.exit(0);
 }
 
@@ -38,4 +38,4 @@ console.log("COMMERCA-CLI");
 console.log("  agent run <goal>");
 console.log("  workflow run <goal>");
 console.log("  product detail <url>");
-console.log("  product price-history <url>");
+console.log("  product search rakatookyang <product-url>");
