@@ -4,6 +4,8 @@ export interface Product {
   image?: string;
   images?: string[];
   url?: string;
+  affiliateUrl?: string;
+  subId?: string;
   price?: number;
   originalPrice?: number;
   discount?: number;
