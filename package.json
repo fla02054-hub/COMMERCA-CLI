@@ -10,6 +10,7 @@
     "workflow:e2e": "node --import tsx --test test/workflow.e2e.test.ts"
   },
   "dependencies": {
+    "ffmpeg-static": "^5.2.0",
     "playwright": "^1.55.0"
   },
   "devDependencies": {
