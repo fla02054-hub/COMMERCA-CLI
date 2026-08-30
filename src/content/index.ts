@@ -13,7 +13,9 @@ export interface ContentPackage {
   title: string;
   hook: string;
   body: string;
+  caption: string;
   callToAction: string;
+  hashtags: string[];
   productUrl?: string;
 }
 
@@ -59,11 +61,15 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const { product } = analysis;
   const price = product.price !== undefined ? `฿${product.price.toLocaleString()}` : "ราคาพิเศษ";
   const promotion = product.promotion ? ` ${product.promotion}` : "";
+  const body = `สินค้าเด่นที่น่าสนใจในตอนนี้${promotion} ${analysis.reasons.join(", ")}.`;
+  const callToAction = "ดูรายละเอียดและเช็กราคาที่หน้าสินค้า";
   return {
     title: product.name,
     hook: `🔥 ${product.name} — ${price}`,
-    body: `สินค้าเด่นที่น่าสนใจในตอนนี้${promotion} ${analysis.reasons.join(", ")}.`,
-    callToAction: "ดูรายละเอียดและเช็กราคาที่หน้าสินค้า",
+    body,
+    caption: `🔥 ${product.name}\n\n${body}\n\n👉 ${callToAction}`,
+    callToAction,
+    hashtags: ["#Shopee", "#โปรเด็ด", "#ของดีราคาถูก", "#ช้อปปิ้งออนไลน์"],
     ...(product.url ? { productUrl: product.url } : {}),
   };
 }
