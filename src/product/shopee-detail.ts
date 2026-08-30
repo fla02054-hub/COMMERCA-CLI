@@ -15,11 +15,40 @@ export interface ShopeeProductDetail extends Product {
   image?: string;
 }
 
+/** Resolve Shopee short/share links before opening them in the browser.
+ * Shopee share links commonly redirect through one or more intermediate URLs.
+ * Keeping this outside BrowserController also makes the product command reliable
+ * when Chrome is already running with another tab selected.
+ */
+export async function resolveShopeeUrl(input: string): Promise<string> {
+  let current = input.trim();
+  if (!/^https?:\/\//i.test(current)) return current;
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const isShortLink = /^https?:\/\/s\.shopee\.[^/]+\//i.test(current);
+    if (!isShortLink) return current;
+
+    try {
+      const response = await fetch(current, { redirect: "manual" });
+      const location = response.headers.get("location");
+      if (!location) return current;
+      current = new URL(location, current).toString();
+    } catch {
+      // Browser navigation below can still resolve the link when direct HTTP
+      // resolution is blocked by Shopee/CDN protection.
+      return current;
+    }
+  }
+
+  return current;
+}
+
 export async function readShopeeProductDetail(url: string, options: { browserPort?: number; waitMs?: number } = {}): Promise<ShopeeProductDetail> {
   const browser = new BrowserController({ port: options.browserPort ?? 9222 });
+  const resolvedUrl = await resolveShopeeUrl(url);
   try {
-    await browser.open(url);
-    await browser.wait(options.waitMs ?? 8000);
+    await browser.open(resolvedUrl);
+    await browser.wait(options.waitMs ?? 10000);
 
     const extract = () => browser.evaluate<Record<string, unknown>>(`(() => {
       const clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();
@@ -63,14 +92,15 @@ export async function readShopeeProductDetail(url: string, options: { browserPor
       const discountMatch = body.match(/(?:ลด|discount|off)\\s*([0-9]{1,3})%/i) || body.match(/([0-9]{1,3})%\\s*(?:ลด|off)/i);
       const discount = discountMatch ? Number(discountMatch[1]) : undefined;
       const promotions = lines.filter((line) => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(line) && line.length <= 200);
-      const isProductPage = Boolean(product?.name) || Boolean(price) || Boolean(document.querySelector('[data-sqe="price"], [class*="product-price"], [class*="ProductPrice"]'));
-      return { name: title || undefined, price, originalPrice, discount, seller: seller || undefined, rating, reviewCount, salesCount, promotion: promotions.join(' | ') || undefined, coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined, voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined, mall: /Shopee Mall/i.test(body), image, isProductPage };
+      const href = String(location.href || '');
+      const productUrl = /(?:\\/product\\/|\\/i\\.\\d+\\.\\d+|\\.\\d+\\.\\d+)/i.test(href);
+      const isProductPage = Boolean(product?.name) || Boolean(title) || price !== undefined || productUrl;
+      return { name: title || undefined, price, originalPrice, discount, seller: seller || undefined, rating, reviewCount, salesCount, promotion: promotions.join(' | ') || undefined, coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined, voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined, mall: /Shopee Mall/i.test(body), image, isProductPage, currentUrl: href };
     })()`);
 
     let data = await extract();
     if (!data.isProductPage || !data.name) {
-      await browser.open(url);
-      await browser.wait(7000);
+      await browser.wait(5000);
       data = await extract();
     }
     if (!data.name || !data.isProductPage) throw new Error("Shopee link did not resolve to a product page. Please retry the same product link.");
