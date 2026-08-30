@@ -1,6 +1,6 @@
 import { WORKFLOW_STAGES } from "./workflow-schema.js";
 import { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
-import type { StageContext } from "./stage-contract.js";
+import type { StageContext, StageResult } from "./stage-contract.js";
 import { MarketResearchRegistry, FixtureMarketResearchProvider } from "../market/registry.js";
 import { generateContent } from "../content/index.js";
 import { generateContentWithGemini } from "../ai/gemini.js";
@@ -9,14 +9,41 @@ import { produceCreative } from "../production/index.js";
 import { rankProducts, scoreProducts } from "../product/index.js";
 import type { Product } from "../product/types.js";
 import type { CreativeStrategy, ProductionPackage, QcReport, PublicationRecord, PerformanceReport, DecisionLearning } from "./stage-artifacts.js";
+
 function marketRegistry(): MarketResearchRegistry { const registry = new MarketResearchRegistry(); registry.register(new FixtureMarketResearchProvider()); return registry; }
 function latest<T>(context: StageContext, type: string): T | undefined { return [...context.artifacts].reverse().find((item) => item.type === type)?.data as T | undefined; }
-export interface StageRegistryOptions { discoverProducts?: (goal: string) => Promise<Product[]>; researchProduct?: (product: Product) => Promise<Product>; marketResearch?: (input: { productId?: string; productName: string; query: string }) => ReturnType<MarketResearchRegistry["research"]>; production?: (creative: CreativeStrategy) => Promise<ProductionPackage>; }
+
+export interface StageRegistryOptions {
+  product?: Product;
+  researchProduct?: (product: Product) => Promise<Product>;
+  marketResearch?: (input: { productId?: string; productName: string; query: string }) => ReturnType<MarketResearchRegistry["research"]>;
+  production?: (creative: CreativeStrategy) => Promise<ProductionPackage>;
+}
+
 export function createStageRegistry(options: StageRegistryOptions = {}): WorkflowStageRegistry {
   const registry = new WorkflowStageRegistry();
   registry.register(new FunctionStage("goal", async (c) => ({ artifacts: [artifact("goal", "goal", { text: c.goal })] })));
-  registry.register(new FunctionStage("product-discovery", async (c) => { if (!options.discoverProducts) throw new Error("Product discovery is not configured."); const results = await options.discoverProducts(c.goal); const unique = [...new Map(results.map((p) => [p.url || `${p.source}:${p.name}`, p])).values()]; if (!unique.length) throw new Error("Product discovery returned 0 products."); return { artifacts: [artifact("product-discovery", "product-candidate-list", unique)] }; }));
-  registry.register(new FunctionStage("product-research", async (c) => { const products = latest<Product[]>(c, "product-candidate-list") ?? []; if (!products.length) throw new Error("Product research requires candidates."); const researcher = options.researchProduct ?? (async (product: Product) => product); const researched: Product[] = []; const errors: Array<{ productId: string; error: string }> = []; for (const product of products) { try { researched.push(await researcher(product)); } catch (error) { errors.push({ productId: product.id, error: error instanceof Error ? error.message : String(error) }); researched.push(product); } } return { artifacts: [artifact("product-research", "product-profile", { products: researched, researchErrors: errors })] }; }));
+
+  registry.register(new FunctionStage("product-input", async () => {
+    const product = options.product;
+    if (!product?.name || typeof product.price !== "number" || !product.url || !product.image) {
+      throw new Error("Manual product input requires name, price, url and image.");
+    }
+    return { artifacts: [artifact("product-input", "product-input", product)] } satisfies StageResult;
+  }));
+
+  registry.register(new FunctionStage("product-research", async (c) => {
+    const product = latest<Product>(c, "product-input");
+    if (!product) throw new Error("Product research requires manual product input.");
+    const researcher = options.researchProduct ?? (async (item: Product) => item);
+    try {
+      const researched = await researcher(product);
+      return { artifacts: [artifact("product-research", "product-profile", { products: [researched], researchErrors: [] })] };
+    } catch (error) {
+      return { artifacts: [artifact("product-research", "product-profile", { products: [product], researchErrors: [{ productId: product.id, error: error instanceof Error ? error.message : String(error) }] })] };
+    }
+  }));
+
   registry.register(new FunctionStage("market-research", async (c) => { const profile = latest<{ products: Product[] }>(c, "product-profile"); const product = profile?.products?.[0]; if (!product) throw new Error("Market research requires researched product."); const evidence = await (options.marketResearch ? options.marketResearch({ productId: product.id, productName: product.name, query: c.goal }) : marketRegistry().research({ productId: product.id, productName: product.name, query: c.goal })); return { artifacts: [artifact("market-research", "market-evidence", { productId: product.id, productName: product.name, evidence })] }; }));
   registry.register(new FunctionStage("product-analysis", async (c) => { const products = latest<{ products: Product[] }>(c, "product-profile")?.products ?? []; if (!products.length) throw new Error("Product analysis requires researched products."); const analysis = rankProducts(products); const market = latest<{ evidence?: unknown }>(c, "market-evidence")?.evidence; return { artifacts: [artifact("product-analysis", "product-analysis", analysis.map((item) => ({ ...item, marketEvidence: market ?? null })))] }; }));
   registry.register(new FunctionStage("product-scoring", async (c) => { const analysis = latest<ReturnType<typeof rankProducts>>(c, "product-analysis") ?? []; if (!analysis.length) throw new Error("Product scoring requires analysis."); return { artifacts: [artifact("product-scoring", "scorecard", scoreProducts(analysis))] }; }));
