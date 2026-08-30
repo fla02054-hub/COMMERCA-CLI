@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { analyzeProduct } from "../src/product/analysis.ts";
-import { buildContentStrategy, validateContentStrategy } from "../src/content/index.ts";
+import { buildContentStrategy, generateContent, validateContentStrategy } from "../src/content/index.ts";
 import { buildCreativeStrategy, validateCreativeStrategy } from "../src/creative/index.ts";
 
 const analysis = analyzeProduct({
+  id: "test-1",
   name: "Test Product",
   url: "https://example.com/product",
   price: 299,
@@ -14,6 +15,8 @@ const analysis = analyzeProduct({
   reviewCount: 1200,
   discount: 30,
   promotion: "ลดเพิ่มพร้อมคูปอง",
+  source: "test",
+  discoveredAt: new Date().toISOString(),
 });
 
 test("Stage 08 creates a complete content strategy", () => {
@@ -25,6 +28,19 @@ test("Stage 08 creates a complete content strategy", () => {
   assert.ok(strategy.copyBrief.includes("ชื่อสินค้า"));
   assert.ok(strategy.callToAction.length > 0);
   assert.equal(strategy.productUrl, "https://example.com/product");
+});
+
+test("Stage 08 creates publish-ready content without leaking the URL into caption", () => {
+  const content = generateContent(analysis);
+  assert.ok(content.title.length <= 70);
+  assert.ok(content.caption.length <= 1200);
+  assert.ok(!content.caption.includes(analysis.product.url!));
+  assert.equal(content.productUrl, analysis.product.url);
+  assert.ok(content.firstComment.includes(analysis.product.url!));
+  assert.equal(content.hashtags.length, 5);
+  assert.ok(content.hashtags.every((tag) => /^#[^\\s#]{2,40}$/.test(tag)));
+  assert.equal(content.voiceScript?.length, 5);
+  assert.equal(content.subtitleScript?.length, 5);
 });
 
 test("Stage 08 rejects an incomplete content strategy", () => {
