@@ -11,19 +11,22 @@ function price(v:string|undefined,label:string):number|undefined { if(v===undefi
 function outputPaths(jobId:string) { const dir=join(process.env.COMMERCA_OUTPUT_ROOT ?? "./output", jobId); return { outputDir: dir, outputMp4: join(dir, "final.mp4") }; }
 async function runAgentJob(jobId: string): Promise<boolean> {
   const saved=await loadJob(jobId);
-  const wasTerminal=["completed","failed"].includes(saved.workflow.state.status);
-  const workflow=wasTerminal ? reopenForAutonomousCycle(saved.workflow, "decision-learning") : saved.workflow;
-  const product=workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;
+  if(["completed","failed"].includes(saved.workflow.state.status)) return false;
+  const product=saved.workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;
   if(!product) throw new Error(`Job ${jobId} has no product input.`);
-  const result=await resumeAutonomousAgent(workflow,product,{...outputPaths(jobId),maxCycles:5,maxAutonomousRevisions:3});
+  const result=await resumeAutonomousAgent(saved.workflow,product,{...outputPaths(jobId),maxCycles:5,maxAutonomousRevisions:3});
   await saveJob(jobId,result.workflow);
-  console.log(JSON.stringify({jobId,agent:"autonomous",mode:wasTerminal?"reopened-cycle":"active",decisions:result.decisions,status:result.workflow.state.status,currentStage:result.workflow.state.currentStage},null,2));
+  console.log(JSON.stringify({jobId,agent:"autonomous",mode:"active",decisions:result.decisions,status:result.workflow.state.status,currentStage:result.workflow.state.currentStage},null,2));
   return true;
 }
 
 if(args[0]==="workflow"&&args[1]==="agent"){
   const jobId=valueAfter("--job-id");
-  if(jobId){ await runAgentJob(jobId); process.exit(0); }
+  if(jobId){
+    const changed=await runAgentJob(jobId);
+    if(!changed) console.log(JSON.stringify({jobId,agent:"autonomous",status:"already-terminal"},null,2));
+    process.exit(0);
+  }
   if(args.includes("--watch")){
     const intervalMs=Math.max(5000,Number(process.env.COMMERCA_AGENT_POLL_MS ?? "30000"));
     console.log(`COMMERCA autonomous agent worker started; polling every ${intervalMs}ms`);
