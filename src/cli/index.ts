@@ -1,18 +1,8 @@
 import { runWorkflow } from "../runtime/index.js";
 import { readShopeeProductDetail, searchRakatookyangProduct } from "../product/index.js";
-import { agent } from "../agent/index.js";
 
 const args = process.argv.slice(2);
 const TEST_PRODUCT_URL = "https://s.shopee.co.th/2qUA6EnWAX";
-
-if (args[0] === "agent" && args[1] === "run") {
-  const goal = args.slice(2).join(" ");
-  if (!goal) throw new Error("usage: agent run <goal>");
-  const url = goal.match(/https?:\/\/\S+/)?.[0];
-  const result = await agent.run({ goal, context: url ? { url } : undefined });
-  console.log(JSON.stringify(result, null, 2));
-  process.exit(result.status === "failed" ? 1 : 0);
-}
 
 if (args[0] === "workflow" && args[1] === "run") {
   const goal = args.slice(2).join(" ") || "find a product to sell";
@@ -41,7 +31,6 @@ if (args[0] === "product" && args[1] === "test") {
 }
 
 console.log("COMMERCA-CLI");
-console.log("  agent run <goal>");
 console.log("  workflow run <goal>");
 console.log("  product detail <url>");
 console.log("  product search rakatookyang <product-url>");
