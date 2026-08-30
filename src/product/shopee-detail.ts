@@ -15,48 +15,16 @@ export interface ShopeeProductDetail extends Product {
   image?: string;
 }
 
-/** Resolve Shopee short/share links before opening them in the browser. */
+/** Keep Shopee short links intact so the logged-in browser performs the redirect. */
 export async function resolveShopeeUrl(input: string): Promise<string> {
-  let current = input.trim();
-  if (!/^https?:\/\//i.test(current)) return current;
-
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const isShortLink = /^https?:\/\/s\.shopee\.[^/]+\//i.test(current);
-    if (!isShortLink) return current;
-
-    try {
-      // Follow normal HTTP redirects first. Node exposes the final URL even
-      // when Shopee responds with an intermediate 3xx/4xx page.
-      const followed = await fetch(current, { redirect: "follow" });
-      if (followed.url && followed.url !== current) {
-        current = followed.url;
-        continue;
-      }
-    } catch {
-      // Fall through to a manual redirect attempt.
-    }
-
-    try {
-      const response = await fetch(current, { redirect: "manual" });
-      const location = response.headers.get("location");
-      if (!location) return current;
-      current = new URL(location, current).toString();
-    } catch {
-      // Browser navigation below can still resolve the link when direct HTTP
-      // resolution is blocked by Shopee/CDN protection.
-      return current;
-    }
-  }
-
-  return current;
+  return input.trim();
 }
 
 export async function readShopeeProductDetail(url: string, options: { browserPort?: number; waitMs?: number } = {}): Promise<ShopeeProductDetail> {
-  const browser = new BrowserController({ port: options.browserPort ?? 9222 });
-  const resolvedUrl = await resolveShopeeUrl(url);
+  const browser = new BrowserController({ port: options.browserPort ?? 9222, launchIfNeeded: true, useExistingChromeProfile: true });
   try {
-    await browser.open(resolvedUrl);
-    await browser.wait(options.waitMs ?? 10000);
+    await browser.open(await resolveShopeeUrl(url));
+    await browser.wait(options.waitMs ?? 12000);
 
     const extract = () => browser.evaluate<Record<string, unknown>>(`(() => {
       const clean = (value) => String(value ?? '').replace(/\\s+/g, ' ').trim();
@@ -72,9 +40,7 @@ export async function readShopeeProductDetail(url: string, options: { browserPor
         return Number.isFinite(n) ? n : undefined;
       };
       const lines = (document.body?.innerText || '').split('\\n').map(clean).filter(Boolean);
-      const jsonValues = [...document.querySelectorAll('script[type="application/ld+json"]')]
-        .map((node) => { try { return JSON.parse(node.textContent || ''); } catch { return undefined; } })
-        .flatMap((value) => Array.isArray(value) ? value : [value]);
+      const jsonValues = [...document.querySelectorAll('script[type="application/ld+json"]')].map((node) => { try { return JSON.parse(node.textContent || ''); } catch { return undefined; } }).flatMap((value) => Array.isArray(value) ? value : [value]);
       const product = jsonValues.find((value) => value && typeof value === 'object' && value['@type'] === 'Product');
       const offers = product?.offers && typeof product.offers === 'object' ? product.offers : undefined;
       const aggregate = product?.aggregateRating && typeof product.aggregateRating === 'object' ? product.aggregateRating : undefined;
@@ -92,30 +58,26 @@ export async function readShopeeProductDetail(url: string, options: { browserPor
       const soldLine = lines.find((line) => /(?:ขายแล้ว|sold)/i.test(line));
       const salesCount = parseNumber(soldLine?.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\\s*[KkMm]?)/i)?.[1]);
       let seller = '';
-      for (const selector of ['[data-sqe="shop-name"]','[data-testid="shop-name"]','[class*="shop-name"]','[class*="ShopName"]','[class*="shopName"]']) {
-        const value = text(document.querySelector(selector));
-        if (value && value.length <= 120 && !/seller centre|เปิดร้านค้า|ติดตามเราบน|ช่วยเหลือ|shopping cart/i.test(value)) { seller = value; break; }
-      }
+      for (const selector of ['[data-sqe="shop-name"]','[data-testid="shop-name"]','[class*="shop-name"]','[class*="ShopName"]','[class*="shopName"]']) { const value = text(document.querySelector(selector)); if (value && value.length <= 120 && !/seller centre|เปิดร้านค้า|ติดตามเราบน|ช่วยเหลือ|shopping cart/i.test(value)) { seller = value; break; } }
       const body = clean(document.body?.innerText || '');
       const discountMatch = body.match(/(?:ลด|discount|off)\\s*([0-9]{1,3})%/i) || body.match(/([0-9]{1,3})%\\s*(?:ลด|off)/i);
       const discount = discountMatch ? Number(discountMatch[1]) : undefined;
       const promotions = lines.filter((line) => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(line) && line.length <= 200);
       const href = String(location.href || '');
+      const blocked = /verify|verification|robot|captcha|unusual traffic|ตรวจสอบ/i.test(body) && !product?.name && price === undefined;
       const productUrl = /(?:\\/product\\/|\\/i\\.\\d+\\.\\d+|\\.\\d+\\.\\d+)/i.test(href);
-      const isProductPage = Boolean(product?.name) || Boolean(title) || price !== undefined || productUrl;
-      return { name: title || undefined, price, originalPrice, discount, seller: seller || undefined, rating, reviewCount, salesCount, promotion: promotions.join(' | ') || undefined, coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined, voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined, mall: /Shopee Mall/i.test(body), image, isProductPage, currentUrl: href };
+      const isProductPage = !blocked && (Boolean(product?.name) || Boolean(title) || price !== undefined || productUrl);
+      return { name: title || undefined, price, originalPrice, discount, seller: seller || undefined, rating, reviewCount, salesCount, promotion: promotions.join(' | ') || undefined, coupon: promotions.find((line) => /คูปอง|coupon/i.test(line)) || undefined, voucher: promotions.find((line) => /voucher|โค้ด/i.test(line)) || undefined, mall: /Shopee Mall/i.test(body), image, isProductPage, blocked, currentUrl: href };
     })()`);
 
     let data = await extract();
-    if (!data.isProductPage || !data.name) {
-      await browser.wait(5000);
-      data = await extract();
-    }
-    if (!data.name || !data.isProductPage) throw new Error("Shopee link did not resolve to a product page. Please retry the same product link.");
+    if (data.blocked) throw new Error("Shopee verification is active in Chrome. Complete the verification in the logged-in Shopee tab, then run the same command again.");
+    if (!data.isProductPage || !data.name) { await browser.wait(5000); data = await extract(); }
+    if (data.blocked) throw new Error("Shopee verification is active in Chrome. Complete the verification in the logged-in Shopee tab, then run the same command again.");
+    if (!data.name || !data.isProductPage) throw new Error("Shopee link did not resolve to a product page in the logged-in Chrome session.");
 
     return {
-      id: `shopee-${Date.now()}`,
-      name: String(data.name), url,
+      id: `shopee-${Date.now()}`, name: String(data.name), url,
       price: typeof data.price === 'number' ? data.price : undefined,
       originalPrice: typeof data.originalPrice === 'number' ? data.originalPrice : undefined,
       discount: typeof data.discount === 'number' ? data.discount : undefined,
@@ -126,8 +88,7 @@ export async function readShopeeProductDetail(url: string, options: { browserPor
       promotion: typeof data.promotion === 'string' ? data.promotion : undefined,
       coupon: typeof data.coupon === 'string' ? data.coupon : undefined,
       voucher: typeof data.voucher === 'string' ? data.voucher : undefined,
-      mall: data.mall === true,
-      image: typeof data.image === 'string' ? data.image : undefined,
+      mall: data.mall === true, image: typeof data.image === 'string' ? data.image : undefined,
       source: 'shopee-browser', discoveredAt: new Date().toISOString(),
     };
   } finally { browser.close(); }
