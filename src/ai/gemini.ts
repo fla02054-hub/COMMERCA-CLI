@@ -1,6 +1,7 @@
 import type { Product } from "../product/types.js";
 import type { ProductAnalysis } from "../product/analysis.js";
 import type { ContentPackage } from "../content/index.js";
+import { generateContent } from "../content/index.js";
 
 const DEFAULT_MODEL = "gemini-2.5-flash-lite";
 const API_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
@@ -13,20 +14,11 @@ function extractJson(text: string): string {
 function validateContent(value: unknown, product: Product): ContentPackage {
   if (!value || typeof value !== "object") throw new Error("Gemini returned a non-object content package.");
   const item = value as Record<string, unknown>;
-  for (const field of ["title", "hook", "body", "callToAction"]) {
-    if (typeof item[field] !== "string" || !item[field].trim()) throw new Error(`Gemini content missing ${field}.`);
-  }
-  if (!Array.isArray(item.hashtags) || item.hashtags.length === 0 || item.hashtags.some((tag) => typeof tag !== "string" || !tag.trim())) {
-    throw new Error("Gemini content missing hashtags.");
-  }
-  return {
-    title: item.title as string,
-    hook: item.hook as string,
-    body: item.body as string,
-    callToAction: item.callToAction as string,
-    hashtags: item.hashtags as string[],
-    ...(product.url ? { productUrl: product.url } : {}),
-  };
+  for (const field of ["title", "hook", "body", "callToAction"]) if (typeof item[field] !== "string" || !item[field].trim()) throw new Error(`Gemini content missing ${field}.`);
+  if (!Array.isArray(item.hashtags) || item.hashtags.length < 3 || item.hashtags.some((tag) => typeof tag !== "string" || !/^#[^\s#]+/.test(tag.trim()))) throw new Error("Gemini content has invalid hashtags.");
+  if (typeof item.caption === "string" && item.caption.includes(product.url ?? "__missing_url__")) throw new Error("Gemini caption must not contain the product URL.");
+  const base = generateContent({ product, score: 0, factors: { price: 0, commission: 0, demand: 0, socialProof: 0, promotion: 0, contentPotential: 0 }, reasons: [] });
+  return { ...base, title: base.title, hook: item.hook as string, body: item.body as string, callToAction: base.callToAction, hashtags: (item.hashtags as string[]).slice(0, 5), productUrl: product.url ?? base.productUrl };
 }
 
 export async function generateContentWithGemini(
@@ -40,11 +32,13 @@ export async function generateContentWithGemini(
   const prompt = [
     "Create a Thai-language ecommerce affiliate content package for the selected product.",
     "Return ONLY valid JSON with exactly these fields: title, hook, body, callToAction, hashtags.",
-    "title, hook, body and callToAction must be strings. hashtags must be an array of 4-8 strings.",
-    "Do not invent product facts. Use only the supplied product and analysis.",
-    JSON.stringify({ product: analysis.product, reasons: analysis.reasons, score: analysis.score }),
+    "Use a short product display name, not the full marketplace listing title.",
+    "Keep hook and body concise and readable for Facebook mobile.",
+    "Use only facts explicitly present in product data. Never invent specs, reviews, sales, health claims, or discounts.",
+    "Do NOT include the product URL in any generated field. The system will place it in firstComment.",
+    "hashtags must be 3-5 short readable hashtags, not the entire product title.",
+    JSON.stringify({ product: analysis.product }),
   ].join("\n");
-
   const response = await fetchImpl(`${API_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, {
     method: "POST",
     headers: { "content-type": "application/json" },
