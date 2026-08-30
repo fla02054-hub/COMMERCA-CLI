@@ -17,6 +17,7 @@ export interface ContentPackage {
   callToAction: string;
   hashtags: string[];
   productUrl: string;
+  firstComment: string;
 }
 
 function validateUrl(url: string | undefined): string {
@@ -31,7 +32,7 @@ function validateUrl(url: string | undefined): string {
 }
 
 function money(value: number | undefined): string {
-  return value === undefined ? "เช็กราคาล่าสุด" : `฿${value.toLocaleString("th-TH")}`;
+  return value === undefined ? "เช็กราคาล่าสุด" : `${value.toLocaleString("th-TH")}. -`;
 }
 
 function productHashtag(name: string): string {
@@ -61,12 +62,12 @@ export function buildContentStrategy(analysis: ProductAnalysis): ContentStrategy
   const evidence = proof.join(" • ") || "ตรวจสอบรายละเอียดในหน้าสินค้า";
   const angles = ["ปัญหา/ความต้องการของคนซื้อ", "จุดเด่นและประโยชน์ของสินค้า", "ราคา โปร และหลักฐานความนิยม"];
   const hooks = [
-    `🔥 ${product.name} เหลือ ${price} จาก ${original} — ${discount}`,
-    `👀 กำลังมองหา ${product.name}? เช็กจุดเด่นและโปรก่อนซื้อ`,
-    `💥 ดีล ${product.name} ที่ควรเปิดดูตอนนี้ — ${price}${product.promotion ? ` • ${product.promotion}` : ""}`,
+    `🔥 ${product.name} ราคานี้น่าสนใจ! จาก ${original} เหลือ ${price}`,
+    `👀 กำลังมองหา ${product.name}? เช็กดีลนี้ก่อน`,
+    `💥 ${product.name} มีโปรอยู่ตอนนี้ — ${price}`,
   ];
-  const copyBrief = `เขียนโพสต์สไตล์ Social Commerce: เปิดด้วยปัญหาหรือ Hook ที่หยุดการเลื่อน → ระบุชื่อสินค้า → แจกแจงจุดเด่นที่มีหลักฐานจากข้อมูลสินค้าเท่านั้น → ราคา/ราคาเดิม/ส่วนลด/โปร → CTA → Product URL. ห้ามแต่งสรรพคุณหรือข้อมูลที่ไม่มีหลักฐาน.`;
-  const callToAction = "👉 กดลิงก์ด้านล่างเพื่อดูสินค้า เช็กราคา และโปรล่าสุดก่อนหมดโปร";
+  const copyBrief = "เขียนโพสต์ Social Commerce ภาษาไทยแบบอ่านเร็ว: Hook จากปัญหาหรือความต้องการ → ชื่อสินค้า → จุดเด่น/หลักฐานจาก Product data เท่านั้น → ราคา/โปร → CTA ให้กดลิงก์ในคอมเมนต์แรก → Hashtags. ห้ามใส่ URL ใน Caption และห้ามแต่งข้อมูลสินค้า.";
+  const callToAction = "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก";
   return { angles, hooks, copyBrief, callToAction, productUrl };
 }
 
@@ -87,42 +88,47 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const original = product.originalPrice !== undefined ? money(product.originalPrice) : undefined;
   const promotion = product.promotion?.trim();
   const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : undefined;
-  const proof: string[] = [];
-  if (product.rating !== undefined) proof.push(`⭐ คะแนน ${product.rating}/5`);
-  if (product.reviewCount !== undefined) proof.push(`รีวิว ${product.reviewCount.toLocaleString("th-TH")}`);
-  if (product.salesCount !== undefined) proof.push(`ขายแล้ว ${product.salesCount.toLocaleString("th-TH")} ชิ้น`);
-  const evidence = proof.join(" • ");
 
-  // Social-commerce format: problem/benefit -> product -> verified features -> deal -> link -> CTA -> hashtags.
-  const hook = discount && original
-    ? `🔥 ${product.name} ราคานี้น่าสนใจ! จาก ${original} เหลือ ${price} | ${discount}`
-    : `⚡ กำลังมองหา ${product.name}? เช็กดีลนี้ก่อนตัดสินใจ`;
+  const hook = product.originalPrice !== undefined && product.price !== undefined
+    ? `🏠 **${product.name}** ราคาแบบนี้ น่าเก็บไว้ดูเลย!`
+    : `🔥 **${product.name}** ใครกำลังมองหาอยู่ ลองดูตัวนี้ก่อน!`;
+
+  const evidence: string[] = [];
+  if (product.rating !== undefined) evidence.push(`⭐ คะแนน ${product.rating}/5`);
+  if (product.reviewCount !== undefined) evidence.push(`รีวิว ${product.reviewCount.toLocaleString("th-TH")} รีวิว`);
+  if (product.salesCount !== undefined) evidence.push(`ขายแล้ว ${product.salesCount.toLocaleString("th-TH")} ชิ้น`);
+
   const featureLines = [
-    `🛍️ ${product.name}`,
-    evidence ? `🌟 ${evidence}` : undefined,
-    promotion ? `🎁 โปรโมชัน: ${promotion}` : undefined,
+    `🛍️ **${product.name}**`,
+    evidence.length ? `✨ ${evidence.join(" • ")}` : undefined,
+    promotion ? `🎁 ${promotion}` : undefined,
   ].filter(Boolean) as string[];
+
   const priceLine = original && discount
-    ? `💰 ราคาปกติ ${original} เหลือเพียง ${price} ${discount}`
-    : `💰 ราคา ${price}`;
-  const callToAction = "👉 คลิกดูรายละเอียดสินค้าและเช็กราคา/โค้ดส่วนลดล่าสุดได้เลย";
+    ? `💥 **จาก ${original} เหลือเพียง ${price}** | ${discount}`
+    : `💰 **ราคา ${price}**`;
+  const callToAction = "👇 **สนใจสินค้า กดลิงก์ในคอมเมนต์แรก**";
   const hashtags = [productHashtag(product.name), categoryHashtag(product.name), "#Shopee", "#ShopeeSale", "#โปรเด็ด"];
   const body = [
+    "กำลังหาของที่คุ้มราคาอยู่? ตัวนี้น่าลองเช็กก่อนตัดสินใจ 👀",
     ...featureLines,
     priceLine,
-    `🛒 พิกัดซื้อ: ${productUrl}`,
     callToAction,
     hashtags.join(" "),
   ].join("\n\n");
+
+  const caption = `${hook}\n\n${body}`;
+  const firstComment = `🛒 **พิกัดสินค้า 👇**\n🔗 ${productUrl}`;
 
   return {
     title: product.name,
     hook,
     body,
-    caption: `${hook}\n\n${body}`,
+    caption,
     callToAction,
     hashtags,
     productUrl,
+    firstComment,
   };
 }
 
