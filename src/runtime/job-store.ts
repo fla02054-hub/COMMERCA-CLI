@@ -1,4 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { RuntimeWorkflow } from "./flow.js";
 
@@ -37,4 +37,18 @@ export async function loadJob(jobId: string): Promise<SavedJob> {
     }
   }
   throw new Error(`Job not found: ${jobId}`);
+}
+
+export async function listJobIds(): Promise<string[]> {
+  const ids = new Set<string>();
+  for (const root of jobRoots()) {
+    try {
+      for (const entry of await readdir(root, { withFileTypes: true })) {
+        if (entry.isFile() && entry.name.endsWith(".json")) ids.add(entry.name.slice(0, -5));
+      }
+    } catch {
+      // A missing job directory is simply empty.
+    }
+  }
+  return [...ids].sort();
 }
