@@ -21,6 +21,23 @@ function latest<T>(context: StageContext, type: string): T | undefined {
   return [...context.artifacts].reverse().find((item) => item.type === type)?.data as T | undefined;
 }
 
+/**
+ * The direct product input is the authoritative product identity for a run.
+ * Providers may enrich it, but they must never replace the user-selected
+ * product name, id, URL, or supplied media with another product.
+ */
+function preserveDirectProduct(input: Product, enrichment: Partial<Product>): Product {
+  return {
+    ...enrichment,
+    ...input,
+    id: input.id,
+    name: input.name,
+    url: input.url,
+    image: input.image ?? enrichment.image,
+    images: input.images?.length ? input.images : enrichment.images ?? (enrichment.image ? [enrichment.image] : []),
+  };
+}
+
 export interface StageRegistryOptions {
   product?: Product;
   researchProduct?: (product: Product) => Promise<Product>;
@@ -54,9 +71,12 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const researcher = options.researchProduct ?? (live ? async (item: Product) => {
       if (!item.url) return item;
       const detail = await readShopeeProductDetail(item.url);
-      return { ...item, ...detail, id: item.id, url: item.url, image: item.image ?? detail.image, images: item.images?.length ? item.images : detail.image ? [detail.image] : item.image ? [item.image] : [] };
+      return preserveDirectProduct(item, detail);
     } : async (item: Product) => item);
-    try { const researched = await researcher(product); return { artifacts: [artifact("product-research", "product-profile", { products: [researched], researchErrors: [] })] }; }
+    try {
+      const researched = preserveDirectProduct(product, await researcher(product));
+      return { artifacts: [artifact("product-research", "product-profile", { products: [researched], researchErrors: [] })] };
+    }
     catch (error) { if (live) throw error; return { artifacts: [artifact("product-research", "product-profile", { products: [product], researchErrors: [{ productId: product.id, error: error instanceof Error ? error.message : String(error) }] })] }; }
   }));
   registry.register(new FunctionStage("market-research", async (c) => {
@@ -85,7 +105,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const content = live || process.env.COMMERCA_USE_GEMINI === "1" ? await generateContentWithGemini(analysis) : generateContent(analysis);
     const productUrl = selected.product.url; if (!productUrl) throw new Error("Product URL is required for publishing.");
     return { artifacts: [artifact("content-strategy", "content-package", { ...content, productUrl, caption: content.caption.includes(productUrl) ? content.caption : `${content.caption}\n\n🔗 ${productUrl}` })] };
-  }));
+  });
   registry.register(new FunctionStage("creative-strategy", async (c) => {
     const content = latest<any>(c, "content-package"); if (!content) throw new Error("Creative strategy requires content package.");
     return { artifacts: [artifact("creative-strategy", "creative-strategy", buildCreativeStrategy(content))] };
