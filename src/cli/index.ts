@@ -10,6 +10,30 @@ function failed(workflow: Awaited<ReturnType<typeof runWorkflowWithProduct>>): n
   process.exit(workflow.state.stages.some((stage) => stage.status === "failed") ? 1 : 0);
 }
 
+function valueAfter(flag: string): string | undefined {
+  const index = args.indexOf(flag);
+  if (index < 0) return undefined;
+  return args[index + 1];
+}
+
+function valuesAfter(flag: string): string[] {
+  const index = args.indexOf(flag);
+  if (index < 0) return [];
+  const values: string[] = [];
+  for (const value of args.slice(index + 1)) {
+    if (value.startsWith("--")) break;
+    values.push(value);
+  }
+  return values;
+}
+
+function parsePrice(value: string | undefined, label: string): number | undefined {
+  if (value === undefined) return undefined;
+  const price = Number(value.replace(/,/g, ""));
+  if (!Number.isFinite(price) || price < 0) throw new Error(`${label} must be a valid non-negative number.`);
+  return price;
+}
+
 if (args[0] === "workflow" && args[1] === "run" && args[2] === "--fixture" && args[3] === "ice-maker") {
   const product: Product = {
     id: "test-ice-maker-2026",
@@ -31,26 +55,42 @@ if (args[0] === "workflow" && args[1] === "run" && args[2] === "--fixture" && ar
 
 if (args[0] === "workflow" && args[1] === "run" && args[2] === "--product") {
   const name = args[3];
-  const priceText = args[4];
-  const url = args[5];
-  const image = args[6];
-  const imagesFlagIndex = args.indexOf("--images", 7);
+  const positionalPrice = args[4];
+  const positionalUrl = args[5];
+  const positionalImage = args[6];
 
-  if (!name || !priceText || !url || !image) {
-    throw new Error("usage: workflow run --product <name> <price> <url> <image> [--images <image1> <image2> ...]");
+  const price = parsePrice(valueAfter("--price") ?? positionalPrice, "Product price");
+  const originalPrice = parsePrice(valueAfter("--original-price"), "Original price");
+  const url = valueAfter("--url") ?? positionalUrl;
+  const image = valueAfter("--image") ?? positionalImage;
+  const suppliedImages = valuesAfter("--images");
+
+  if (!name || price === undefined || !url || !image) {
+    throw new Error(
+      "usage: workflow run --product <name> <price> <url> <image> [--original-price <price>] [--images <image1> <image2> ...]",
+    );
   }
 
-  const price = Number(priceText.replace(/,/g, ""));
-  if (!Number.isFinite(price) || price < 0) throw new Error("Product price must be a valid non-negative number.");
+  if (originalPrice !== undefined && originalPrice < price) {
+    throw new Error("Original price cannot be lower than the sale price.");
+  }
 
-  const images = imagesFlagIndex >= 0
-    ? args.slice(imagesFlagIndex + 1).filter((value) => value && !value.startsWith("--"))
-    : [image];
+  const allImages = [image, ...suppliedImages].filter(Boolean);
+  const images = [...new Set(allImages)];
+  const discount = originalPrice !== undefined && originalPrice > 0
+    ? Math.round(((originalPrice - price) / originalPrice) * 100)
+    : undefined;
+  const promotion = originalPrice !== undefined && originalPrice !== price
+    ? `ลดเหลือ ฿${price.toLocaleString("th-TH")} จากราคาปกติ ฿${originalPrice.toLocaleString("th-TH")}`
+    : undefined;
 
   const product: Product = {
     id: `manual-${crypto.randomUUID()}`,
     name,
     price,
+    originalPrice,
+    discount,
+    promotion,
     url,
     image,
     images,
@@ -71,6 +111,6 @@ if (args[0] === "product" && args[1] === "detail") {
 }
 
 console.log("COMMERCA-CLI");
-console.log("  workflow run --product <name> <price> <url> <image> [--images <image1> <image2> ...]");
+console.log("  workflow run --product <name> <price> <url> <image> [--original-price <price>] [--images <image1> <image2> ...]");
 console.log("  workflow run --fixture ice-maker");
 console.log("  product detail <url>");
