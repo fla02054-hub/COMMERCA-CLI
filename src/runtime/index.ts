@@ -1,18 +1,25 @@
-export type { WorkflowStage, WorkflowArtifact, WorkflowBlueprint, StageStatus } from "./workflow-schema.js";
+export type { WorkflowStage, WorkflowArtifact, WorkflowBlueprint, StageStatus, WorkflowStatus } from "./workflow-schema.js";
 export { WORKFLOW_STAGES, STAGE_ORDER, createWorkflowBlueprint } from "./workflow-schema.js";
 export type { StageContext, StageResult, WorkflowStageHandler } from "./stage-contract.js";
 export { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 export { createStageRegistry } from "./stage-registry.js";
 export { createRuntimeWorkflow, executeWorkflow } from "./flow.js";
-export type { RuntimeWorkflow } from "./flow.js";
+export type { RuntimeWorkflow, ExecuteWorkflowOptions } from "./flow.js";
 
-import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow } from "./flow.js";
+import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow, type ExecuteWorkflowOptions } from "./flow.js";
 import { createStageRegistry } from "./stage-registry.js";
 import type { Product } from "../product/types.js";
 
-/** Run the 14-stage workflow using a product supplied directly by the user. */
-export async function runWorkflowWithProduct(goal: string, product: Product): Promise<RuntimeWorkflow> {
+export async function runWorkflowWithProduct(goal: string, product: Product, options?: ExecuteWorkflowOptions): Promise<RuntimeWorkflow> {
   const workflow = createRuntimeWorkflow(goal);
+  const registry = createStageRegistry({ product });
+  return executeWorkflow(workflow, registry, options);
+}
+
+export async function continueWorkflow(workflow: RuntimeWorkflow, product: Product): Promise<RuntimeWorkflow> {
+  if (workflow.state.status !== "awaiting-approval" || workflow.state.currentStage !== "qc") throw new Error("Workflow is not waiting for QC approval.");
+  workflow.state.status = "running";
+  workflow.state.approval = { ...(workflow.state.approval ?? { requestedAt: new Date().toISOString() }), approvedAt: new Date().toISOString() };
   const registry = createStageRegistry({ product });
   return executeWorkflow(workflow, registry);
 }
