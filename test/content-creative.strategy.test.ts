@@ -38,7 +38,7 @@ test("Stage 08 creates publish-ready content without leaking the URL into captio
   assert.equal(content.productUrl, analysis.product.url);
   assert.ok(content.firstComment.includes(analysis.product.url!));
   assert.equal(content.hashtags.length, 5);
-  assert.ok(content.hashtags.every((tag) => /^#[^\\s#]{2,40}$/.test(tag)));
+  assert.ok(content.hashtags.every((tag) => /^#[^\s#]{2,40}$/.test(tag)));
   assert.equal(content.voiceScript?.length, 5);
   assert.equal(content.subtitleScript?.length, 5);
 });
