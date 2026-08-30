@@ -1,4 +1,4 @@
-import { continueWorkflow, runAutonomousAgent, resumeAutonomousAgent } from "../runtime/index.js";
+import { continueWorkflow, runAutonomousAgent, resumeAutonomousAgent, reopenForAutonomousCycle } from "../runtime/index.js";
 import { listJobIds, loadJob, saveJob } from "../runtime/job-store.js";
 import type { Product } from "../product/types.js";
 import { configureUtf8Console } from "./encoding.js";
@@ -11,22 +11,19 @@ function price(v:string|undefined,label:string):number|undefined { if(v===undefi
 function outputPaths(jobId:string) { const dir=join(process.env.COMMERCA_OUTPUT_ROOT ?? "./output", jobId); return { outputDir: dir, outputMp4: join(dir, "final.mp4") }; }
 async function runAgentJob(jobId: string): Promise<boolean> {
   const saved=await loadJob(jobId);
-  if(["completed","failed"].includes(saved.workflow.state.status)) return false;
-  const product=saved.workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;
+  const wasTerminal=["completed","failed"].includes(saved.workflow.state.status);
+  const workflow=wasTerminal ? reopenForAutonomousCycle(saved.workflow, "decision-learning") : saved.workflow;
+  const product=workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;
   if(!product) throw new Error(`Job ${jobId} has no product input.`);
-  const result=await resumeAutonomousAgent(saved.workflow,product,{...outputPaths(jobId),maxCycles:3,maxAutonomousRevisions:3});
+  const result=await resumeAutonomousAgent(workflow,product,{...outputPaths(jobId),maxCycles:5,maxAutonomousRevisions:3});
   await saveJob(jobId,result.workflow);
-  console.log(JSON.stringify({jobId,agent:"autonomous",decisions:result.decisions,status:result.workflow.state.status,currentStage:result.workflow.state.currentStage},null,2));
+  console.log(JSON.stringify({jobId,agent:"autonomous",mode:wasTerminal?"reopened-cycle":"active",decisions:result.decisions,status:result.workflow.state.status,currentStage:result.workflow.state.currentStage},null,2));
   return true;
 }
 
 if(args[0]==="workflow"&&args[1]==="agent"){
   const jobId=valueAfter("--job-id");
-  if(jobId){
-    const changed=await runAgentJob(jobId);
-    if(!changed) console.log(JSON.stringify({jobId,agent:"autonomous",status:"already-terminal"},null,2));
-    process.exit(0);
-  }
+  if(jobId){ await runAgentJob(jobId); process.exit(0); }
   if(args.includes("--watch")){
     const intervalMs=Math.max(5000,Number(process.env.COMMERCA_AGENT_POLL_MS ?? "30000"));
     console.log(`COMMERCA autonomous agent worker started; polling every ${intervalMs}ms`);
@@ -60,7 +57,7 @@ if(args[0]==="workflow"&&args[1]==="run"&&args.includes("--product")){
   const images=[...new Set([image,...extra].filter(Boolean))];
   const product:Product={id:`manual-${crypto.randomUUID()}`,name,price:special,originalPrice:original,discount:original>0?Math.round(((original-special)/original)*100):0,promotion:original!==special?`ลดเหลือ ฿${special.toLocaleString("th-TH")} จากราคาปกติ ฿${original.toLocaleString("th-TH")}`:undefined,url,image,images,source:"manual",discoveredAt:new Date().toISOString()};
   const jobId=`JOB-${new Date().toISOString().replace(/\D/g,"").slice(0,14)}-${crypto.randomUUID().slice(0,6).toUpperCase()}`;
-  const result=await runAutonomousAgent(name,product,{...outputPaths(jobId),maxCycles:3,maxAutonomousRevisions:3});
+  const result=await runAutonomousAgent(name,product,{...outputPaths(jobId),maxCycles:5,maxAutonomousRevisions:3});
   await saveJob(jobId,result.workflow);
   console.log(`COMMERCA-CLI\n\nJOB ID: ${jobId}\nAGENT: autonomous\nPRODUCT: ${name}\nSTATUS: ${result.workflow.state.status}`);
   console.log(JSON.stringify({decisions:result.decisions,...result.workflow},null,2));
