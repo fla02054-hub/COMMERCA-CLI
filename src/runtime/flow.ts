@@ -34,6 +34,20 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
     state.status = "pending"; delete state.startedAt; delete state.completedAt; delete state.error;
   }
 }
+function inferRepairStage(failedStage: WorkflowStage, error: string): WorkflowStage | undefined {
+  const text = error.toLowerCase();
+  if (failedStage === "production") {
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content-strategy";
+    if (text.includes("creative strategy") || text.includes("storyboard")) return "creative-strategy";
+    return "creative-strategy";
+  }
+  if (failedStage === "qc") {
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url")) return "content-strategy";
+    if (text.includes("creative") || text.includes("storyboard")) return "creative-strategy";
+    if (text.includes("video") || text.includes("image") || text.includes("voice") || text.includes("subtitle")) return "production";
+  }
+  return undefined;
+}
 export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "decision-learning"): RuntimeWorkflow {
   if (workflow.state.status !== "completed" && workflow.state.status !== "failed") return workflow;
   resetForRevision(workflow, startStage); workflow.state.status = "running"; workflow.state.currentStage = startStage; workflow.state.approval = undefined;
@@ -80,8 +94,9 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         autonomousRevisions++; workflow.artifacts.push({ stage, type: "stage-failure", data: { stage, error: state.error, attempts: state.attempts }, createdAt: new Date().toISOString() });
         state.status = "completed"; state.completedAt = new Date().toISOString(); workflow.state.status = "running";
         const decision = await options.decideNextStage(stage, workflow);
-        workflow.artifacts.push({ stage, type: "agent-failure-decision", data: { ...decision, failedStage: stage, revision: autonomousRevisions }, createdAt: new Date().toISOString() });
-        if (decision.action !== "stop" && decision.nextStage && autonomousRevisionAllowed(stage, decision.nextStage)) { resetForRevision(workflow, decision.nextStage); stage = decision.nextStage; continue; }
+        const repairStage = decision.nextStage && autonomousRevisionAllowed(stage, decision.nextStage) ? decision.nextStage : inferRepairStage(stage, state.error);
+        workflow.artifacts.push({ stage, type: "agent-failure-decision", data: { ...decision, failedStage: stage, repairStage, revision: autonomousRevisions }, createdAt: new Date().toISOString() });
+        if (decision.action !== "stop" && repairStage && autonomousRevisionAllowed(stage, repairStage)) { resetForRevision(workflow, repairStage); stage = repairStage; continue; }
         state.status = "failed"; workflow.state.status = "failed"; return workflow;
       }
       if (state.attempts < workflow.state.maxAttemptsPerStage) { state.status = "pending"; continue; }
