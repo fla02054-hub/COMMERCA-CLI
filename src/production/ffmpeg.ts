@@ -15,11 +15,21 @@ function resolveFfmpegBin(): string {
   return "ffmpeg";
 }
 
+function escapeSubtitlePath(filePath: string): string {
+  return filePath
+    .replace(/\\/g, "/")
+    .replace(/'/g, "\\'")
+    .replace(/:/g, "\\:")
+    .replace(/,/g, "\\,");
+}
+
 export function renderFinalMp4(input: RenderInput): Promise<string> {
   const args = ["-y", "-i", input.videoPath];
   if (input.voicePath) args.push("-i", input.voicePath);
   const filters: string[] = [];
-  if (input.subtitlePath) filters.push(`subtitles=${input.subtitlePath.replace(/\\/g, "/").replace(/:/g, "\\:")}`);
+  if (input.subtitlePath) {
+    filters.push(`subtitles=filename='${escapeSubtitlePath(input.subtitlePath)}'`);
+  }
   if (filters.length) args.push("-vf", filters.join(","));
   if (input.voicePath) args.push("-map", "0:v:0", "-map", "1:a:0", "-c:a", "aac", "-shortest");
   args.push("-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", input.outputPath);
