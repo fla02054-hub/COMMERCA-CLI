@@ -6,19 +6,27 @@ const originalFetch = globalThis.fetch;
 
 test("Shopee short link resolves through redirect chain", async () => {
   const calls: string[] = [];
-  globalThis.fetch = async (input) => {
+  let first = true;
+  globalThis.fetch = async (input, init) => {
     const url = String(input);
-    calls.push(url);
-    if (url === "https://s.shopee.co.th/2qUA6EnWAX") {
-      return new Response(null, { status: 302, headers: { location: "https://shopee.co.th/product-name-i.123.456" } });
+    calls.push(`${url}|${init?.redirect ?? "default"}`);
+    if (first) {
+      first = false;
+      return new Response(null, { status: 200 });
     }
-    return new Response(null, { status: 200 });
+    return new Response(null, {
+      status: 302,
+      headers: { location: "https://shopee.co.th/product-name-i.123.456" },
+    });
   };
 
   try {
     const resolved = await resolveShopeeUrl("https://s.shopee.co.th/2qUA6EnWAX");
     assert.equal(resolved, "https://shopee.co.th/product-name-i.123.456");
-    assert.deepEqual(calls, ["https://s.shopee.co.th/2qUA6EnWAX"]);
+    assert.deepEqual(calls, [
+      "https://s.shopee.co.th/2qUA6EnWAX|follow",
+      "https://s.shopee.co.th/2qUA6EnWAX|manual",
+    ]);
   } finally {
     globalThis.fetch = originalFetch;
   }
