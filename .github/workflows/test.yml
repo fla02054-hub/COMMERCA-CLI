@@ -56,7 +56,13 @@ jobs:
           if [ -f /tmp/commerca-final-package/post.txt ]; then
             cp /tmp/commerca-final-package/post.txt /tmp/commerca-publish-package/post.txt
           fi
-          mp4="$(find /tmp -type f -path '*/commerca-production-*/final.mp4' -print -quit)"
+          mp4=""
+          for dir in /tmp/commerca-production-*; do
+            if [ -f "$dir/final.mp4" ]; then
+              mp4="$dir/final.mp4"
+              break
+            fi
+          done
           test -n "$mp4"
           cp "$mp4" /tmp/commerca-publish-package/final.mp4
       - name: Upload final content package
