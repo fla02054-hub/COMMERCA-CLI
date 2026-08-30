@@ -9,11 +9,19 @@ export type { RuntimeWorkflow } from "./flow.js";
 import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow } from "./flow.js";
 import { createStageRegistry } from "./stage-registry.js";
 import { searchRakatookyangProduct } from "../product/index.js";
+import type { Product } from "../product/types.js";
 
 const URL_PATTERN = /https?:\/\/\S+/i;
 
 function productUrlFromGoal(goal: string): string | undefined {
   return goal.match(URL_PATTERN)?.[0]?.replace(/[),.!?]+$/g, "");
+}
+
+/** Run the workflow with an explicitly supplied product, bypassing discovery/scraping. */
+export async function runWorkflowWithProduct(goal: string, product: Product): Promise<RuntimeWorkflow> {
+  const workflow = createRuntimeWorkflow(goal);
+  const registry = createStageRegistry({ discoverProducts: async () => [product] });
+  return executeWorkflow(workflow, registry);
 }
 
 /** Single public entry point for the 14-stage COMMERCA workflow. */
