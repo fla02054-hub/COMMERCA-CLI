@@ -1,6 +1,6 @@
 /** Complete 14-stage COMMERCA workflow state and typed artifact contracts. */
 export const WORKFLOW_STAGES = [
-  "goal", "product-discovery", "product-research", "market-research",
+  "goal", "product-input", "product-research", "market-research",
   "product-analysis", "product-scoring", "product-selection", "content-strategy",
   "creative-strategy", "production", "qc", "publishing", "performance", "decision-learning",
 ] as const;
@@ -11,6 +11,12 @@ export type WorkflowStatus = "running" | "completed" | "failed";
 export type DecisionKind = "winner" | "loser" | "optimize";
 
 export interface GoalInput { text: string; }
+export interface ProductInput {
+  name: string;
+  price: number;
+  url: string;
+  image: string;
+}
 export interface MarketEvidence { demand?: unknown; trend?: unknown; competitor?: unknown; adsEvidence?: unknown; status?: "verified" | "pending-provider"; }
 export interface ContentStrategy { angle: string; hook: string; copy: string; cta: string; }
 export interface CreativeStrategy { image: unknown; video: unknown; storyboard: unknown; prompt: unknown; }
@@ -24,7 +30,7 @@ export interface WorkflowArtifact<T = unknown> { stage: WorkflowStage; type: str
 export interface WorkflowStageState { stage: WorkflowStage; status: StageStatus; attempts: number; startedAt?: string; completedAt?: string; error?: string; artifactTypes: string[]; }
 
 export interface WorkflowBlueprint {
-  version: 3;
+  version: 4;
   status: WorkflowStatus;
   stages: WorkflowStageState[];
   currentStage: WorkflowStage;
@@ -36,7 +42,7 @@ export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(WOR
 
 export function createWorkflowBlueprint(maxAttemptsPerStage = 2): WorkflowBlueprint {
   return {
-    version: 3, status: "running", currentStage: "goal", transitionHistory: [], maxAttemptsPerStage,
+    version: 4, status: "running", currentStage: "goal", transitionHistory: [], maxAttemptsPerStage,
     stages: WORKFLOW_STAGES.map((stage) => ({ stage, status: "pending", attempts: 0, artifactTypes: [] })),
   };
 }
