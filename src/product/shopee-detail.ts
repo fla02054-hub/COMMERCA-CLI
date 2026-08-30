@@ -15,11 +15,7 @@ export interface ShopeeProductDetail extends Product {
   image?: string;
 }
 
-/** Resolve Shopee short/share links before opening them in the browser.
- * Shopee share links commonly redirect through one or more intermediate URLs.
- * Keeping this outside BrowserController also makes the product command reliable
- * when Chrome is already running with another tab selected.
- */
+/** Resolve Shopee short/share links before opening them in the browser. */
 export async function resolveShopeeUrl(input: string): Promise<string> {
   let current = input.trim();
   if (!/^https?:\/\//i.test(current)) return current;
@@ -27,6 +23,18 @@ export async function resolveShopeeUrl(input: string): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const isShortLink = /^https?:\/\/s\.shopee\.[^/]+\//i.test(current);
     if (!isShortLink) return current;
+
+    try {
+      // Follow normal HTTP redirects first. Node exposes the final URL even
+      // when Shopee responds with an intermediate 3xx/4xx page.
+      const followed = await fetch(current, { redirect: "follow" });
+      if (followed.url && followed.url !== current) {
+        current = followed.url;
+        continue;
+      }
+    } catch {
+      // Fall through to a manual redirect attempt.
+    }
 
     try {
       const response = await fetch(current, { redirect: "manual" });
