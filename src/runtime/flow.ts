@@ -23,9 +23,10 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
     state.status = "pending"; delete state.startedAt; delete state.completedAt; delete state.error;
   }
 }
-function qcFailed(resultArtifacts: WorkflowArtifact[]): boolean {
+function qcReport(resultArtifacts: WorkflowArtifact[]): { passed: boolean } | undefined {
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
-  return typeof report === "object" && report !== null && "passed" in report && (report as { passed?: unknown }).passed === false;
+  if (typeof report !== "object" || report === null || !("passed" in report)) return undefined;
+  return report as { passed: boolean };
 }
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry): Promise<RuntimeWorkflow> {
   let stage = workflow.state.currentStage; let guard = 0;
@@ -43,10 +44,16 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const context: StageContext = { workflowId: workflow.id, goal: workflow.goal, stage, artifacts: workflow.artifacts };
       const result = await registry.get(stage).execute(context);
       workflow.artifacts.push(...result.artifacts); state.artifactTypes.push(...result.artifacts.map((item) => item.type));
-      if (stage === "qc" && qcFailed(result.artifacts) && !result.nextStage) {
+      const qc = stage === "qc" ? qcReport(result.artifacts) : undefined;
+      if (stage === "qc" && qc && !qc.passed && !result.nextStage) {
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
+      if (stage === "qc" && qc?.passed && !result.nextStage) {
+        workflow.state.currentStage = "qc";
+        workflow.state.status = "awaiting_approval";
+        return workflow;
+      }
       const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
