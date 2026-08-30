@@ -36,6 +36,11 @@ function contentIntegrity(product: Product, content: ContentPackage): string[] {
   if (content.subtitleScript?.length !== 5) issues.push("subtitle script must contain exactly 5 lines");
   return issues;
 }
+function chooseRevisionStage(issues: string[]): QcReport["revisionStage"] {
+  if (issues.some((issue) => issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content-strategy";
+  if (issues.some((issue) => issue.includes("creative") || issue.includes("storyboard"))) return "creative-strategy";
+  return "production";
+}
 export function createStageRegistry(options: StageRegistryOptions = {}): WorkflowStageRegistry {
   const registry = new WorkflowStageRegistry();
   const live = process.env.COMMERCA_MODE === "live";
@@ -104,7 +109,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     if (!production?.voice) issues.push("missing voice output");
     if (!production?.subtitle) issues.push("missing subtitle output");
     if (v) { try { if ((await stat(v)).size < 1000) issues.push("final video file is empty or invalid"); } catch { if (live) issues.push("final video file does not exist"); } }
-    return { artifacts: [artifact("qc", "qc-report", { passed: issues.length === 0, issues } satisfies QcReport)] };
+    return { artifacts: [artifact("qc", "qc-report", { passed: issues.length === 0, issues, ...(issues.length ? { revisionStage: chooseRevisionStage(issues) } : {}) } satisfies QcReport)] };
   }));
   registry.register(new FunctionStage("publishing", async c => {
     const qc = latest<QcReport>(c, "qc-report");
