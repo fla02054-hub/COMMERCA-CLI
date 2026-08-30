@@ -10,6 +10,8 @@ export {
   type RakatookyangPriceResult,
 } from "./rakatookyang-price.js";
 
+export { searchRakatookyangProduct } from "./rakatookyang-search.js";
+
 export {
   analyzeProduct,
   type ProductAnalysis,
