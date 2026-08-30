@@ -20,31 +20,44 @@ export interface ContentPackage {
 }
 
 function validateUrl(url: string | undefined): string {
-  if (!url) throw new Error("Product URL is required for publish-ready content.");
+  if (!url?.trim()) throw new Error("Product URL is required for publish-ready content.");
   try {
     const parsed = new URL(url);
-    if (!/^https?:$/.test(parsed.protocol)) throw new Error();
+    if (!/^https?:$/.test(parsed.protocol) || !parsed.hostname) throw new Error();
   } catch {
     throw new Error("Product URL must be a valid http(s) URL.");
   }
-  return url;
+  return url.trim();
+}
+
+function money(value: number | undefined): string {
+  return value === undefined ? "เช็กราคาล่าสุด" : `฿${value.toLocaleString("th-TH")}`;
+}
+
+function productHashtag(name: string): string {
+  const clean = name.replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 40);
+  return clean ? `#${clean}` : "#โปรเด็ด";
 }
 
 export function buildContentStrategy(analysis: ProductAnalysis): ContentStrategy {
   const { product } = analysis;
   const productUrl = validateUrl(product.url);
-  const price = product.price !== undefined ? `฿${product.price.toLocaleString()}` : "ราคาพิเศษ";
-  const promotion = product.promotion?.trim();
-  const reasons = analysis.reasons.filter(Boolean);
-  const proof = reasons.length > 0 ? reasons.join(", ") : "จุดเด่นจากข้อมูลสินค้า";
-  const angles = ["จุดเด่นและประโยชน์ใช้งานจริง", "ราคาและความคุ้มค่า", "โปรโมชั่นและความเร่งด่วน"];
+  const price = money(product.price);
+  const original = money(product.originalPrice);
+  const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : "มีโปรให้เช็ก";
+  const proof: string[] = [];
+  if (product.rating !== undefined) proof.push(`คะแนน ${product.rating}/5`);
+  if (product.reviewCount !== undefined) proof.push(`${product.reviewCount.toLocaleString("th-TH")} รีวิว`);
+  if (product.salesCount !== undefined) proof.push(`${product.salesCount.toLocaleString("th-TH")} ชิ้นขาย`);
+  const evidence = proof.join(" • ") || "ตรวจสอบรายละเอียดในหน้าสินค้า";
+  const angles = ["ประโยชน์ที่คนซื้อจะได้", "ราคาและส่วนลดเทียบราคาเดิม", "หลักฐานความนิยมและโปรโมชัน"];
   const hooks = [
-    `🔥 ${product.name} ราคา ${price} — จุดเด่นที่ทำให้น่าซื้อ`,
-    promotion ? `🔥 ${product.name} + ${promotion} — รีบเช็กโปรก่อนหมด` : `🔥 ${product.name} ${price} — ดีลที่ควรเช็กตอนนี้`,
-    `👀 ถ้ากำลังหา ${product.name} ดู 3 จุดนี้ก่อนตัดสินใจ`,
+    `🔥 ${product.name} เหลือ ${price} จาก ${original} — ${discount}`,
+    `👀 ก่อนซื้อ ${product.name} เช็ก 3 จุดนี้: ${evidence}`,
+    `💥 ดีล ${product.name} ที่ควรเปิดดูตอนนี้ — ราคา ${price}${product.commission !== undefined ? ` • คอมมิชชัน ฿${product.commission}` : ""}`,
   ];
-  const copyBrief = `ขาย ${product.name} โดยเน้น ${proof}${promotion ? ` และโปร ${promotion}` : ""}; ใช้ราคา ${price}; ห้ามอ้างสรรพคุณเกินข้อมูลจริง`;
-  const callToAction = "👉 กดลิงก์เพื่อดูรายละเอียด เช็กราคา และโปรโมชันล่าสุด";
+  const copyBrief = `ขาย ${product.name} ด้วยข้อมูลที่ตรวจสอบได้: ราคา ${price}, ราคาเดิม ${original}, ${discount}, ${evidence}. ห้ามแต่งสรรพคุณหรือโปรที่ไม่มีในข้อมูล.`;
+  const callToAction = "👉 กดลิงก์ด้านล่างเพื่อดูสินค้า เช็กราคา และโปรล่าสุดก่อนหมดโปร";
   return { angles, hooks, copyBrief, callToAction, productUrl };
 }
 
@@ -61,22 +74,32 @@ export function validateContentStrategy(strategy: ContentStrategy): string[] {
 export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const { product } = analysis;
   const productUrl = validateUrl(product.url);
-  const price = product.price !== undefined ? `฿${product.price.toLocaleString()}` : "ราคาพิเศษ";
+  const price = money(product.price);
+  const original = money(product.originalPrice);
   const promotion = product.promotion?.trim();
-  const reasons = analysis.reasons.filter(Boolean);
-  const sellingPoints = reasons.length ? reasons.slice(0, 3).join(" • ") : "ดูรายละเอียดสินค้าและโปรโมชันล่าสุด";
-  const hook = promotion
-    ? `🔥 ${product.name} ราคา ${price} | ${promotion}`
+  const discount = product.discount !== undefined ? `ลด ${money(product.discount)}` : undefined;
+  const proof: string[] = [];
+  if (product.rating !== undefined) proof.push(`⭐ ${product.rating}/5`);
+  if (product.reviewCount !== undefined) proof.push(`รีวิว ${product.reviewCount.toLocaleString("th-TH")}`);
+  if (product.salesCount !== undefined) proof.push(`ขายแล้ว ${product.salesCount.toLocaleString("th-TH")}`);
+  const evidence = proof.join(" • ");
+  const hook = discount
+    ? `🔥 ${product.name} เหลือ ${price} จาก ${original} | ${discount}`
     : `🔥 ${product.name} ราคา ${price} — เช็กดีลก่อนตัดสินใจ`;
-  const body = `กำลังมองหา ${product.name} อยู่ไหม? จุดที่น่าสนใจ: ${sellingPoints}${promotion ? ` | โปรตอนนี้: ${promotion}` : ""}.`;
-  const callToAction = "👉 กดลิงก์เพื่อดูรายละเอียด เช็กราคา และโปรโมชันล่าสุด";
-  const productTag = product.name.replace(/[^\p{L}\p{N}]+/gu, "").slice(0, 40);
-  const hashtags = ["#Shopee", "#โปรShopee", productTag ? `#${productTag}` : "#โปรเด็ด", "#ของดีบอกต่อ", "#ช้อปปิ้งออนไลน์"];
+  const details = [
+    `💰 ราคา: ${price}${product.originalPrice !== undefined ? ` (จาก ${original})` : ""}`,
+    discount,
+    promotion ? `🎁 โปร: ${promotion}` : undefined,
+    evidence || undefined,
+  ].filter(Boolean).join("\n");
+  const body = `${details}\n\nเหมาะสำหรับคนที่กำลังมองหา ${product.name} และอยากเทียบราคา/โปรก่อนซื้อ`;
+  const callToAction = "👉 กดลิงก์เพื่อดูรายละเอียดสินค้า เช็กราคา และโปรโมชันล่าสุดก่อนตัดสินใจ";
+  const hashtags = [productHashtag(product.name), "#Shopee", "#โปรShopee", "#ช้อปปิ้งออนไลน์", "#ของดีบอกต่อ"];
   return {
     title: product.name,
     hook,
     body,
-    caption: `${hook}\n\n${body}\n\n${callToAction}\n${productUrl}\n\n${hashtags.join(" ")}`,
+    caption: `${hook}\n\n${body}\n\n${callToAction}\n🔗 ${productUrl}\n\n${hashtags.join(" ")}`,
     callToAction,
     hashtags,
     productUrl,
@@ -85,7 +108,7 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
 
 export function validateProductForContent(product: Product): string[] {
   const errors: string[] = [];
-  if (!product.name.trim()) errors.push("missing product name");
+  if (!product.name?.trim()) errors.push("missing product name");
   try { validateUrl(product.url); } catch (error) { errors.push(error instanceof Error ? error.message : String(error)); }
   return errors;
 }
