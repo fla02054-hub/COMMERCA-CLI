@@ -33,9 +33,7 @@ export function validateUrl(url: string | undefined): string {
   return url.trim();
 }
 
-function money(value: number | undefined): string {
-  return value === undefined ? "เช็กราคาล่าสุด" : `฿${value.toLocaleString("th-TH")}`;
-}
+function money(value: number | undefined): string { return value === undefined ? "เช็กราคาล่าสุด" : `฿${value.toLocaleString("th-TH")}`; }
 
 function shortProductName(name: string): string {
   const n = name.replace(/\s+/g, " ").trim();
@@ -51,21 +49,8 @@ function shortProductName(name: string): string {
 
 function featurePhrases(product: Product): string[] {
   const name = product.name;
-  const phrases: string[] = [];
-  const candidates = [
-    "แก้ปวดคอ บ่า ไหล่",
-    "สัมผัสนุ่ม",
-    "3D",
-    "ลดการนอนกรน",
-    "ป้องกันไรฝุ่น",
-    "ไม่เสียรูปหลังนอนนาน",
-    "พับได้",
-    "ไฟฟ้า",
-    "ชาร์จเร็ว",
-    "กันน้ำ",
-  ];
-  for (const phrase of candidates) if (name.toLowerCase().includes(phrase.toLowerCase())) phrases.push(phrase);
-  return [...new Set(phrases)].slice(0, 4);
+  const candidates = ["แก้ปวดคอ บ่า ไหล่", "สัมผัสนุ่ม", "3D", "ลดการนอนกรน", "ป้องกันไรฝุ่น", "ไม่เสียรูปหลังนอนนาน", "พับได้", "ไฟฟ้า", "ชาร์จเร็ว", "กันน้ำ"];
+  return [...new Set(candidates.filter((phrase) => name.toLowerCase().includes(phrase.toLowerCase())))].slice(0, 4);
 }
 
 function categoryHashtags(name: string): string[] {
@@ -97,17 +82,14 @@ export function buildContentStrategy(analysis: ProductAnalysis): ContentStrategy
   const displayName = shortProductName(product.name);
   const price = money(product.price);
   const original = money(product.originalPrice);
-  const hooks = [
-    product.originalPrice !== undefined && product.price !== undefined
-      ? `🔥 ${displayName} จาก ${original} เหลือ ${price}`
-      : `🔥 ${displayName} น่าสนใจสำหรับคนกำลังหาอยู่`,
-    `👀 กำลังมองหา${displayName.replace(/^\S+\s/, " ")}อยู่? ลองดูดีลนี้`,
-    `💥 ${displayName} โปรน่าสนใจ เช็กก่อนหมดโปร`,
-  ];
   return {
     angles: ["ปัญหา/ความต้องการ", "จุดเด่นที่ยืนยันได้", "ราคาและโปร"],
-    hooks,
-    copyBrief: "เขียน Social Commerce ภาษาไทยแบบสั้นและอ่านเร็ว ใช้เฉพาะข้อมูลสินค้า/โปรที่ยืนยันได้ ห้ามแต่งสเปก รีวิว ยอดขาย หรือคำกล่าวอ้าง ห้ามใส่ URL ใน caption และให้ลิงก์อยู่ใน firstComment เท่านั้น",
+    hooks: [
+      product.originalPrice !== undefined && product.price !== undefined ? `🔥 ${displayName} จาก ${original} เหลือ ${price}` : `🔥 ${displayName} น่าสนใจสำหรับคนกำลังหาอยู่`,
+      `👀 กำลังมองหา ${displayName} อยู่? ลองดูดีลนี้`,
+      `💥 ${displayName} โปรน่าสนใจ เช็กก่อนหมดโปร`,
+    ],
+    copyBrief: "เขียน Social Commerce ภาษาไทยแบบสั้นและอ่านเร็ว โดยใช้ชื่อสินค้าแบบสั้นที่อ่านง่าย ใช้เฉพาะข้อมูลสินค้า/โปรที่ยืนยันได้ ห้ามแต่งสเปก รีวิว ยอดขาย หรือคำกล่าวอ้าง ห้ามใส่ URL ใน caption และให้ลิงก์อยู่ใน firstComment เท่านั้น",
     callToAction: "👇 สนใจสินค้า กดลิงก์ในคอมเมนต์แรก",
     productUrl,
   };
@@ -132,9 +114,7 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const discount = discountText(product);
   const promotion = product.promotion?.trim();
   const hook = discount ? `🔥 ${displayName} ราคานี้น่าสนใจ!` : `🔥 ${displayName} น่าสนใจสำหรับคนกำลังหาอยู่`;
-  const benefit = features.length
-    ? `✨ จุดเด่น: ${features.join(" • ")}`
-    : "✨ เช็กจุดเด่นและรายละเอียดเพิ่มเติมได้จากหน้าสินค้า";
+  const benefit = features.length ? `✨ จุดเด่น: ${features.join(" • ")}` : "✨ เช็กจุดเด่นและรายละเอียดเพิ่มเติมได้จากหน้าสินค้า";
   const proofLine = proof.length ? `📌 ${proof.join(" • ")}` : undefined;
   const priceLine = discount ?? (product.price !== undefined ? `💰 ราคา ${money(product.price)}` : "💰 เช็กราคาล่าสุดในหน้าสินค้า");
   const promoLine = promotion && promotion !== discount ? `🎁 ${promotion}` : undefined;
@@ -150,13 +130,7 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
     `${discount ? discount.replace("🔥 ", "") : priceLine.replace("💰 ", "")}${proof.length ? ` และ ${proof.join(" และ ")}` : ""} ก่อนตัดสินใจลองเช็กโปรล่าสุดอีกครั้ง`,
     `ถ้าสนใจ ${displayName} กดดูรายละเอียดจากลิงก์ที่แนบไว้ในคอมเมนต์แรกได้เลย`,
   ];
-  const subtitleScript = [
-    `🔥 ${displayName}`,
-    features.slice(0, 2).join(" • ") || "จุดเด่นน่าสนใจ",
-    features[2] || "ดูรายละเอียดสินค้า",
-    discount || priceLine,
-    "👇 ดูลิงก์ในคอมเมนต์แรก",
-  ];
+  const subtitleScript = [`🔥 ${displayName}`, features.slice(0, 2).join(" • ") || "จุดเด่นน่าสนใจ", features[2] || "ดูรายละเอียดสินค้า", discount || priceLine, "👇 ดูลิงก์ในคอมเมนต์แรก"];
   return { title: displayName, hook, body, caption, callToAction, hashtags, productUrl, firstComment, voiceScript, subtitleScript };
 }
 
