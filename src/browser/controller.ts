@@ -10,12 +10,11 @@ export interface BrowserControllerOptions {
   headless?: boolean;
   launchIfNeeded?: boolean;
   extensionPath?: string;
+  /** Use the normal Chrome user-data directory so existing Shopee login cookies are available. */
+  useExistingChromeProfile?: boolean;
 }
 
-interface CdpTarget {
-  type: string;
-  webSocketDebuggerUrl?: string;
-}
+interface CdpTarget { type: string; webSocketDebuggerUrl?: string; }
 
 export class BrowserController {
   private readonly port: number;
@@ -31,15 +30,13 @@ export class BrowserController {
 
   async connect(): Promise<void> {
     if (await this.tryConnect()) return;
-    if (this.options.launchIfNeeded === false) {
-      throw new Error("Chrome DevTools is not available.");
-    }
+    if (this.options.launchIfNeeded === false) throw new Error("Chrome DevTools is not available on port 9222. Start Chrome with remote debugging enabled.");
     await this.launchChrome();
     for (let attempt = 0; attempt < 30; attempt++) {
       if (await this.tryConnect()) return;
       await this.wait(500);
     }
-    throw new Error("Could not start Chrome with remote debugging enabled.");
+    throw new Error("Could not connect to Chrome with remote debugging enabled. Close Chrome and start it with --remote-debugging-port=9222, then retry.");
   }
 
   private async tryConnect(): Promise<boolean> {
@@ -54,33 +51,27 @@ export class BrowserController {
         const socket = this.socket!;
         const onOpen = () => { cleanup(); resolvePromise(); };
         const onError = () => { cleanup(); reject(new Error("Could not connect to Chrome DevTools")); };
-        const cleanup = () => {
-          socket.removeEventListener("open", onOpen);
-          socket.removeEventListener("error", onError);
-        };
-        socket.addEventListener("open", onOpen);
-        socket.addEventListener("error", onError);
+        const cleanup = () => { socket.removeEventListener("open", onOpen); socket.removeEventListener("error", onError); };
+        socket.addEventListener("open", onOpen); socket.addEventListener("error", onError);
       });
       return true;
-    } catch {
-      this.socket = undefined;
-      return false;
-    }
+    } catch { this.socket = undefined; return false; }
   }
 
   private async launchChrome(): Promise<void> {
     const executable = this.options.executablePath ?? this.findChrome();
     if (!executable) throw new Error("Chrome executable not found. Set COMMERCA_CHROME_PATH if needed.");
-    const profileDir = this.options.profileDir ?? join(homedir(), ".commerca-cli", "chrome-profile");
+
+    const useExisting = this.options.useExistingChromeProfile === true;
+    const profileDir = this.options.profileDir ?? (useExisting
+      ? join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Google", "Chrome", "User Data")
+      : join(homedir(), ".commerca-cli", "chrome-profile"));
     mkdirSync(profileDir, { recursive: true });
-    const args = [
-      `--remote-debugging-port=${this.port}`,
-      `--user-data-dir=${profileDir}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-    ];
+
+    const args = [`--remote-debugging-port=${this.port}`, `--user-data-dir=${profileDir}`, "--no-first-run", "--no-default-browser-check"];
+    if (useExisting) args.push(`--profile-directory=${process.env.COMMERCA_CHROME_PROFILE ?? "Default"}`);
     const extensionPath = this.options.extensionPath ?? resolve(process.cwd(), "extension");
-    if (existsSync(extensionPath)) {
+    if (!useExisting && existsSync(extensionPath)) {
       args.push(`--disable-extensions-except=${extensionPath}`);
       args.push(`--load-extension=${extensionPath}`);
     }
@@ -92,14 +83,8 @@ export class BrowserController {
     const explicit = process.env.COMMERCA_CHROME_PATH;
     if (explicit && existsSync(explicit)) return explicit;
     const candidates = process.platform === "win32"
-      ? [
-          join(process.env.PROGRAMFILES ?? "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"),
-          join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"),
-          join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData\\Local"), "Google\\Chrome\\Application\\chrome.exe"),
-        ]
-      : process.platform === "darwin"
-        ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
-        : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
+      ? [join(process.env.PROGRAMFILES ?? "C:\\Program Files", "Google\\Chrome\\Application\\chrome.exe"), join(process.env["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google\\Chrome\\Application\\chrome.exe"), join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData\\Local"), "Google\\Chrome\\Application\\chrome.exe")]
+      : process.platform === "darwin" ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"] : ["/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"];
     return candidates.find((candidate) => existsSync(candidate));
   }
 
@@ -112,22 +97,13 @@ export class BrowserController {
 
   async evaluate<T>(expression: string): Promise<T> {
     if (!this.socket) await this.connect();
-    const response = await this.command<{ result: { value?: T; description?: string } }>(
-      "Runtime.evaluate",
-      { expression, returnByValue: true, awaitPromise: true },
-    );
+    const response = await this.command<{ result: { value?: T; description?: string } }>("Runtime.evaluate", { expression, returnByValue: true, awaitPromise: true });
     if (response.result?.value !== undefined) return response.result.value;
     throw new Error(response.result?.description ?? "Browser evaluation returned no value");
   }
 
-  async wait(ms: number): Promise<void> {
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, ms));
-  }
-
-  close(): void {
-    this.socket?.close();
-    this.socket = undefined;
-  }
+  async wait(ms: number): Promise<void> { await new Promise((resolvePromise) => setTimeout(resolvePromise, ms)); }
+  close(): void { this.socket?.close(); this.socket = undefined; this.process = undefined; }
 
   private command<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
     if (!this.socket || this.socket.readyState !== WebSocket.OPEN) return Promise.reject(new Error("Browser is not connected"));
@@ -138,8 +114,7 @@ export class BrowserController {
         const response = JSON.parse(String(event.data)) as { id?: number; result?: T; error?: { message: string } };
         if (response.id !== id) return;
         socket.removeEventListener("message", listener);
-        if (response.error) reject(new Error(response.error.message));
-        else resolvePromise(response.result as T);
+        if (response.error) reject(new Error(response.error.message)); else resolvePromise(response.result as T);
       };
       socket.addEventListener("message", listener);
       socket.send(JSON.stringify({ id, method, params }));
