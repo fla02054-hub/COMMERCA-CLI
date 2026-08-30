@@ -58,6 +58,7 @@ function qcReport(resultArtifacts: WorkflowArtifact[]): { passed?: unknown; revi
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
   return typeof report === "object" && report !== null ? report as { passed?: unknown; revisionStage?: WorkflowStage } : undefined;
 }
+function isTerminalStage(stage: WorkflowStage): boolean { return stage === "decision-learning"; }
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
   const pauseAfterQc = options.pauseAfterQc ?? false; const autonomous = options.autonomous ?? false;
@@ -81,11 +82,17 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (autonomous && options.decideNextStage) {
         const decision = await options.decideNextStage(stage, workflow);
-        if (decision.action === "stop") { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
+        // A stop is valid only at the terminal learning stage. A non-terminal
+        // stop decision must never mark the whole workflow completed.
+        if (decision.action === "stop" && isTerminalStage(stage)) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
+        if (decision.action === "stop" && !isTerminalStage(stage)) {
+          const forcedNext = WORKFLOW_STAGES[STAGE_ORDER[stage]];
+          if (forcedNext) { next = forcedNext; workflow.artifacts.push({ stage, type: "agent-decision-override", data: { original: decision, action: "continue", nextStage: forcedNext, reason: "Non-terminal stage cannot stop the autonomous workflow." }, createdAt: new Date().toISOString() }); }
+        }
         if (decision.nextStage && (transitionAllowed(stage, decision.nextStage) || ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)))) { if ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)) resetForRevision(workflow, decision.nextStage); next = decision.nextStage; }
         if (decision.action === "publish" && transitionAllowed(stage, "publishing")) next = "publishing";
       }
-      if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
+      if (!next) { workflow.state.currentStage = stage; workflow.state.status = isTerminalStage(stage) ? "completed" : "failed"; return workflow; }
       if (!transitionAllowed(stage, next) && !(autonomous && autonomousRevisionAllowed(stage, next))) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
       if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next); stage = next;
     } catch (error) {
