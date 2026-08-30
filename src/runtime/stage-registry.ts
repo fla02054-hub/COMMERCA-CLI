@@ -1,3 +1,5 @@
+import { writeFile, mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { WORKFLOW_STAGES } from "./workflow-schema.js";
 import { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 import type { StageContext, StageResult } from "./stage-contract.js";
@@ -8,7 +10,7 @@ import { buildCreativeStrategy } from "../creative/index.js";
 import { produceCreative } from "../production/index.js";
 import { readShopeeProductDetail, rankProducts, scoreProducts } from "../product/index.js";
 import type { Product } from "../product/types.js";
-import type { CreativeStrategy, ProductionPackage, QcReport, PublicationRecord, PerformanceReport, DecisionLearning } from "./stage-artifacts.js";
+import type { CreativeStrategy, ProductionPackage, FinalContentPackage, QcReport, PublicationRecord, PerformanceReport, DecisionLearning } from "./stage-artifacts.js";
 
 function marketRegistry(): MarketResearchRegistry {
   const registry = new MarketResearchRegistry();
@@ -46,14 +48,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const researcher = options.researchProduct ?? (live ? async (item: Product) => {
       if (!item.url) return item;
       const detail = await readShopeeProductDetail(item.url);
-      return {
-        ...item,
-        ...detail,
-        id: item.id,
-        url: item.url,
-        image: item.image ?? detail.image,
-        images: item.images?.length ? item.images : detail.image ? [detail.image] : item.image ? [item.image] : [],
-      };
+      return { ...item, ...detail, id: item.id, url: item.url, image: item.image ?? detail.image, images: item.images?.length ? item.images : detail.image ? [detail.image] : item.image ? [item.image] : [] };
     } : async (item: Product) => item);
     try {
       const researched = await researcher(product);
@@ -68,9 +63,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     const profile = latest<{ products: Product[] }>(c, "product-profile");
     const product = profile?.products?.[0];
     if (!product) throw new Error("Market research requires researched product.");
-    const evidence = await (options.marketResearch
-      ? options.marketResearch({ productId: product.id, productName: product.name, query: c.goal, product })
-      : marketRegistry().research({ productId: product.id, productName: product.name, query: c.goal, product }));
+    const evidence = await (options.marketResearch ? options.marketResearch({ productId: product.id, productName: product.name, query: c.goal, product }) : marketRegistry().research({ productId: product.id, productName: product.name, query: c.goal, product }));
     return { artifacts: [artifact("market-research", "market-evidence", { productId: product.id, productName: product.name, evidence })] };
   }));
 
@@ -127,7 +120,19 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
   registry.register(new FunctionStage("publishing", async (c) => {
     const qc = latest<QcReport>(c, "qc-report");
     if (!qc?.passed) throw new Error("Publishing blocked: QC did not pass.");
-    return { artifacts: [artifact("publishing", "publication", { organic: { status: "ready" }, ads: { status: "ready" } } satisfies PublicationRecord)] };
+    const product = latest<Product>(c, "product-input");
+    const content = latest<any>(c, "content-package");
+    const creative = latest<CreativeStrategy>(c, "creative-strategy");
+    const production = latest<ProductionPackage>(c, "production-package");
+    if (!product || !content || !creative || !production) throw new Error("Final content package is incomplete.");
+    const publish: PublicationRecord = { organic: { status: "ready", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: content.productUrl }, ads: { status: "ready" } };
+    const finalPackage: FinalContentPackage = { product, content, creative, production, qc, publish };
+    publish.finalPackage = finalPackage;
+    const outputDir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
+    const packagePath = process.env.COMMERCA_OUTPUT_PACKAGE ?? `${outputDir}/final-content-package.json`;
+    await mkdir(dirname(packagePath), { recursive: true });
+    await writeFile(packagePath, JSON.stringify(finalPackage, null, 2), "utf8");
+    return { artifacts: [artifact("publishing", "final-package", finalPackage), artifact("publishing", "publication", publish)] };
   }));
   registry.register(new FunctionStage("performance", async (c) => {
     if (!latest<PublicationRecord>(c, "publication")) throw new Error("Performance requires publication.");
