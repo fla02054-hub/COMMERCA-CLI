@@ -1,5 +1,5 @@
 import { mkdir, writeFile, stat } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { WORKFLOW_STAGES } from "./workflow-schema.js";
 import { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
@@ -14,7 +14,7 @@ import type { ContentPackage } from "../content/index.js";
 import type { CreativeStrategy, ProductionPackage, FinalContentPackage, QcReport, PublicationRecord, PerformanceReport } from "./stage-artifacts.js";
 
 function latest<T>(context: StageContext, type: string): T | undefined { return [...context.artifacts].reverse().find((item) => item.type === type)?.data as T | undefined; }
-export interface StageRegistryOptions { product?: Product; production?: (creative: CreativeStrategy) => Promise<ProductionPackage>; }
+export interface StageRegistryOptions { product?: Product; outputDir?: string; outputMp4?: string; production?: (creative: CreativeStrategy) => Promise<ProductionPackage>; }
 function finalVideoPath(production: ProductionPackage): string | undefined {
   const e = production.editing;
   if (e && typeof e === "object" && "finalMp4" in e && typeof (e as any).finalMp4 === "string") return (e as any).finalMp4;
@@ -87,7 +87,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
   registry.register(new FunctionStage("production", async c => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
     if (!creative) throw new Error("Production requires creative strategy.");
-    return { artifacts: [artifact("production", "production-package", options.production ? await options.production(creative) : await produceCreative(creative))] };
+    return { artifacts: [artifact("production", "production-package", options.production ? await options.production(creative) : await produceCreative(creative, { outputDir: options.outputDir, outputMp4: options.outputMp4 }))] };
   }));
   registry.register(new FunctionStage("qc", async c => {
     const p = latest<Product>(c, "product-input");
@@ -123,8 +123,8 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     if (live) { const result = await publishToFacebookPage({ videoPath, caption: content.caption }); publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink }; }
     const publish = { organic: publishedOrganic, ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url } };
     const finalPackage: FinalContentPackage = { product: p, content: { ...content, firstComment }, creative, production: { ...prod, video: { path: videoPath } }, qc, publish };
-    const dir = process.env.COMMERCA_OUTPUT_DIR ?? "./output";
-    const path = process.env.COMMERCA_OUTPUT_PACKAGE ?? `${dir}/final-content-package.json`;
+    const dir = options.outputDir ?? process.env.COMMERCA_OUTPUT_DIR ?? "./output";
+    const path = options.outputMp4 ? join(dirname(options.outputMp4), "final-content-package.json") : `${dir}/final-content-package.json`;
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(finalPackage, null, 2), "utf8");
     await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${firstComment}\n`, "utf8");
