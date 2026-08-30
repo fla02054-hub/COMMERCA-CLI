@@ -18,6 +18,8 @@ export interface ContentPackage {
   hashtags: string[];
   productUrl: string;
   firstComment: string;
+  voiceScript: string[];
+  subtitleScript: string[];
 }
 
 function validateUrl(url: string | undefined): string {
@@ -121,6 +123,21 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
   const caption = `${hook}\n\n${body}`;
   const firstComment = `🛒 พิกัดสินค้า 👇\n🔗 ${productUrl}`;
 
+  const voiceScript = [
+    `🔥 ${product.name} ราคานี้น่าสนใจ!`,
+    `กำลังมองหา ${product.name} อยู่? ลองเช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ`,
+    `จุดเด่นและรายละเอียดของ ${product.name} ดูได้จากข้อมูลสินค้าที่ระบุไว้`,
+    original && discount ? `จาก ${original} เหลือเพียง ${price} ${discount}` : `ตอนนี้ราคา ${price}`,
+    "สนใจสินค้า กดลิงก์ในคอมเมนต์แรก",
+  ];
+  const subtitleScript = [
+    `🔥 ${product.name}`,
+    `เช็กข้อมูลและโปรล่าสุดก่อนตัดสินใจ`,
+    `ดูจุดเด่นและรายละเอียดสินค้า`,
+    original && discount ? `จาก ${original} เหลือ ${price}` : `ราคา ${price}`,
+    "👇 กดลิงก์ในคอมเมนต์แรก",
+  ];
+
   return {
     title: product.name,
     hook,
@@ -130,6 +147,8 @@ export function generateContent(analysis: ProductAnalysis): ContentPackage {
     hashtags,
     productUrl,
     firstComment,
+    voiceScript,
+    subtitleScript,
   };
 }
 
