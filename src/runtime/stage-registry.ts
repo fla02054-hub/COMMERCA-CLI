@@ -109,9 +109,11 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
   registry.register(new FunctionStage("creative-strategy", async (c) => {
     const content = latest<any>(c, "content-package"); if (!content) throw new Error("Creative strategy requires content package.");
     return { artifacts: [artifact("creative-strategy", "creative-strategy", buildCreativeStrategy(content))] };
-  }));
+  });
   registry.register(new FunctionStage("production", async (c) => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy"); if (!creative) throw new Error("Production requires creative strategy.");
+    // Production is deliberately delegated to the real production subsystem.
+    // The workflow registry must not manufacture a fake final video just to satisfy QC.
     const production = options.production ? await options.production(creative) : await produceCreative(creative);
     return { artifacts: [artifact("production", "production-package", production)] };
   }));
