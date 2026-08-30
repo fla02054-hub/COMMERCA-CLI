@@ -10,9 +10,9 @@ import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow } from "./
 import { createStageRegistry } from "./stage-registry.js";
 import type { Product } from "../product/types.js";
 
-/** Run the 14-stage workflow using a product supplied directly by the user. */
-export async function runWorkflowWithProduct(goal: string, product: Product): Promise<RuntimeWorkflow> {
+/** Run the existing workflow. stopAfterQc adds the single approval gate after QC. */
+export async function runWorkflowWithProduct(goal: string, product: Product, options: { stopAfterQc?: boolean } = {}): Promise<RuntimeWorkflow> {
   const workflow = createRuntimeWorkflow(goal);
   const registry = createStageRegistry({ product });
-  return executeWorkflow(workflow, registry);
+  return executeWorkflow(workflow, registry, options);
 }
