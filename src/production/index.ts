@@ -43,51 +43,31 @@ async function materializeMedia(value: unknown, file: string): Promise<string | 
   return filePath(value);
 }
 
-function resolveFfmpeg(): string {
-  return process.env.FFMPEG_BIN?.trim() || ffmpegStatic || "ffmpeg";
-}
+function resolveFfmpeg(): string { return process.env.FFMPEG_BIN?.trim() || ffmpegStatic || "ffmpeg"; }
 
 async function runLocalFfmpeg(args: string[]): Promise<void> {
-  try {
-    await execFileAsync(resolveFfmpeg(), args);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Local FFmpeg production failed: ${message}`);
-  }
+  try { await execFileAsync(resolveFfmpeg(), args); }
+  catch (error) { throw new Error(`Local FFmpeg production failed: ${error instanceof Error ? error.message : String(error)}`); }
 }
 
-/**
- * Local production fallback. Real media is rendered for downstream workflow/QC,
- * while the public ProductionPackage shape remains prompt-compatible for callers.
- */
 async function produceLocalCreative(creative: CreativeStrategy, outputDir: string): Promise<ProductionPackage> {
   await mkdir(outputDir, { recursive: true });
   const videoPath = join(outputDir, "video-1.mp4");
   const voicePath = join(outputDir, "voice.wav");
   const subtitlePath = join(outputDir, "subtitles.srt");
   const outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
-  const duration = Math.max(2, Math.min(10, creative.storyboard.length || 2));
+  const duration = 10;
 
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", `color=c=black:s=720x1280:d=${duration}`, "-r", "30", "-pix_fmt", "yuv420p", videoPath]);
   await runLocalFfmpeg(["-y", "-f", "lavfi", "-i", `sine=frequency=880:duration=${duration}`, "-ar", "44100", voicePath]);
-  await writeFile(subtitlePath, buildSubtitle(creative.storyboard), "utf8");
+  await writeFile(subtitlePath, buildSubtitle(creative.subtitleScript ?? ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"]), "utf8");
   const finalMp4 = await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath });
-
-  const editing = { storyboard: creative.storyboard, prompts: creative.prompt } as Record<string, unknown>;
-  Object.defineProperties(editing, {
-    finalMp4: { value: finalMp4, enumerable: false },
-    status: { value: "rendered", enumerable: false },
-    localVideoPath: { value: videoPath, enumerable: false },
-    localVoicePath: { value: voicePath, enumerable: false },
-    localSubtitlePath: { value: subtitlePath, enumerable: false },
-  });
-
   return {
     image: creative.image,
     video: creative.video,
-    voice: creative.storyboard.join("\n"),
-    subtitle: creative.storyboard,
-    editing,
+    voice: creative.voiceScript ?? [],
+    subtitle: creative.subtitleScript ?? [],
+    editing: { type: "editing-manifest", sequence: ["video", "voice", "subtitle"], storyboard: creative.storyboard, prompts: creative.prompt, finalMp4, status: "rendered", localVideoPath: videoPath, localVoicePath: voicePath, localSubtitlePath: subtitlePath },
   };
 }
 
@@ -106,17 +86,16 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
 
   const rawImage = renderImage ? await Promise.all(creative.image.map(renderImage)) : creative.image;
   const rawVideo = renderVideo ? await Promise.all(creative.video.map(renderVideo)) : creative.video;
-  const narration = creative.storyboard.join("\n");
+  const voiceScript = creative.voiceScript?.length ? creative.voiceScript : creative.storyboard;
+  const subtitleScript = creative.subtitleScript?.length ? creative.subtitleScript : ["ดูสินค้า", "จุดเด่น", "รายละเอียด", "ราคาและโปร", "ดูคอมเมนต์"];
+  const narration = voiceScript.join("\n");
   const rawVoice = generateVoice ? await generateVoice(narration) : narration;
-  const subtitle = options.generateSubtitle ? await options.generateSubtitle(narration) : useGemini ? buildSubtitle(creative.storyboard) : creative.storyboard;
+  const subtitle = options.generateSubtitle ? await options.generateSubtitle(subtitleScript.join("\n")) : useGemini ? buildSubtitle(subtitleScript) : subtitleScript;
   const image = useGemini ? await Promise.all(rawImage.map((value, i) => materializeMedia(value, join(outputDir, `image-${i + 1}.png`)))) : rawImage;
   const video = useGemini ? await Promise.all(rawVideo.map((value, i) => materializeMedia(value, join(outputDir, `video-${i + 1}.mp4`)))) : rawVideo;
   const voice = useGemini ? await materializeMedia(rawVoice, join(outputDir, "voice.wav")) : rawVoice;
   const subtitlePath = useGemini && typeof subtitle === "string" ? join(outputDir, "subtitles.srt") : filePath(subtitle);
-  if (useGemini && typeof subtitle === "string") {
-    await mkdir(dirname(subtitlePath), { recursive: true });
-    await writeFile(subtitlePath, subtitle, "utf8");
-  }
+  if (useGemini && typeof subtitle === "string") { await mkdir(dirname(subtitlePath), { recursive: true }); await writeFile(subtitlePath, subtitle, "utf8"); }
 
   const editingInput = { image, video, voice, subtitle: subtitlePath ?? subtitle };
   let editing: unknown;
@@ -126,7 +105,7 @@ export async function produceCreative(creative: CreativeStrategy, options: Produ
     const voicePath = filePath(voice);
     const outputPath = process.env.COMMERCA_OUTPUT_MP4 ?? join(outputDir, "final.mp4");
     if (!videoPath) throw new Error("Live production completed generation but no local video file was produced.");
-    editing = { ...buildEditingManifest(editingInput), finalMp4: await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath }), status: "rendered" };
-  } else editing = { storyboard: creative.storyboard, prompts: creative.prompt };
+    editing = { ...buildEditingManifest(editingInput), storyboard: creative.storyboard, voiceScript, subtitleScript, finalMp4: await renderFinalMp4({ videoPath, voicePath, subtitlePath, outputPath }), status: "rendered" };
+  } else editing = { storyboard: creative.storyboard, prompts: creative.prompt, voiceScript, subtitleScript, status: "ready-for-render" };
   return { image, video, voice, subtitle: subtitlePath ?? subtitle, editing };
 }
