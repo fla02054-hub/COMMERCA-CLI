@@ -4,7 +4,8 @@ import { WorkflowStageRegistry } from "./stages.js";
 import type { StageContext } from "./stage-contract.js";
 
 export interface RuntimeWorkflow { id: string; goal: string; state: WorkflowBlueprint; artifacts: WorkflowArtifact[]; }
-export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; autonomous?: boolean; maxAutonomousRevisions?: number; }
+export interface AgentNextDecision { action?: "continue" | "revise" | "stop" | "publish" | "optimize"; nextStage?: WorkflowStage; reason?: string; confidence?: number; }
+export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; autonomous?: boolean; maxAutonomousRevisions?: number; decideNextStage?: (stage: WorkflowStage, workflow: RuntimeWorkflow) => Promise<AgentNextDecision>; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
@@ -55,25 +56,34 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content-strategy";
         if (autonomous && autonomousRevisions < maxAutonomousRevisions) {
           autonomousRevisions += 1;
-          state.status = "completed";
-          state.completedAt = new Date().toISOString();
+          state.status = "completed"; state.completedAt = new Date().toISOString();
           workflow.artifacts.push({ stage: "qc", type: "agent-decision", data: { action: "revise", revision: autonomousRevisions, nextStage: revisionStage, issues: report ? [report] : [] }, createdAt: new Date().toISOString() });
-          workflow.state.status = "running";
-          resetForRevision(workflow, revisionStage);
-          stage = revisionStage;
-          continue;
+          workflow.state.status = "running"; resetForRevision(workflow, revisionStage); stage = revisionStage; continue;
         }
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
       if (stage === "qc" && pauseAfterQc) {
-        workflow.state.currentStage = "qc";
-        workflow.state.status = "awaiting-approval";
+        workflow.state.currentStage = "qc"; workflow.state.status = "awaiting-approval";
         workflow.state.approval = { requestedAt: new Date().toISOString() };
         workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the final package, then approve to continue publishing." }, createdAt: new Date().toISOString() });
         return workflow;
       }
-      const next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
+
+      let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
+      if (autonomous && options.decideNextStage) {
+        const decision = await options.decideNextStage(stage, workflow);
+        if (decision.action === "stop") {
+          workflow.state.currentStage = stage; workflow.state.status = "completed";
+          workflow.artifacts.push({ stage, type: "agent-decision", data: { ...decision, action: "stop" }, createdAt: new Date().toISOString() });
+          return workflow;
+        }
+        if (decision.nextStage && transitionAllowed(stage, decision.nextStage)) next = decision.nextStage;
+        if (decision.action === "revise" && decision.nextStage && transitionAllowed(stage, decision.nextStage)) {
+          resetForRevision(workflow, decision.nextStage); next = decision.nextStage;
+        }
+        if (decision.action === "publish" && transitionAllowed(stage, "publishing")) next = "publishing";
+      }
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
       if (!transitionAllowed(stage, next)) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
       if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next);
