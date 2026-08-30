@@ -47,7 +47,18 @@ jobs:
         run: npm run test:gemini
       - name: Assemble post-ready package
         if: success()
-        run: npm run package:publish
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf /tmp/commerca-publish-package
+          mkdir -p /tmp/commerca-publish-package
+          cp /tmp/commerca-final-package/final-content-package.json /tmp/commerca-publish-package/final-content-package.json
+          if [ -f /tmp/commerca-final-package/post.txt ]; then
+            cp /tmp/commerca-final-package/post.txt /tmp/commerca-publish-package/post.txt
+          fi
+          mp4="$(find /tmp -type f -path '*/commerca-production-*/final.mp4' -print -quit)"
+          test -n "$mp4"
+          cp "$mp4" /tmp/commerca-publish-package/final.mp4
       - name: Upload final content package
         if: success()
         uses: actions/upload-artifact@v7
