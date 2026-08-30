@@ -3,7 +3,7 @@ export { WORKFLOW_STAGES, STAGE_ORDER, createWorkflowBlueprint } from "./workflo
 export type { StageContext, StageResult, WorkflowStageHandler } from "./stage-contract.js";
 export { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 export { createStageRegistry } from "./stage-registry.js";
-export { createRuntimeWorkflow, executeWorkflow } from "./flow.js";
+export { createRuntimeWorkflow, executeWorkflow, reopenForAutonomousCycle } from "./flow.js";
 export type { RuntimeWorkflow, ExecuteWorkflowOptions } from "./flow.js";
 export { runAutonomousAgent, resumeAutonomousAgent } from "./autonomous-agent.js";
 export type { AutonomousAgentOptions, AutonomousAgentResult } from "./autonomous-agent.js";
