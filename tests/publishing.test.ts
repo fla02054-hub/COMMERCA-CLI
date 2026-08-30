@@ -1,37 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { validatePublishPackage } from "../src/publish";
+import { buildPublicationPlan, validatePublicationPlan } from "../src/publishing/index";
+import type { ProductionPackage } from "../src/runtime/stage-artifacts";
+
+const production: ProductionPackage = {
+  editing: { finalMp4: "/tmp/final.mp4" }
+};
 
 describe("publishing", () => {
-  it("accepts a complete post-ready package", () => {
-    const result = validatePublishPackage({
-      videoPath: "/tmp/final.mp4",
-      caption: "Test Product ราคา 499 บาท จาก 799 บาท ลด 300 บาท — Test promotion",
-      hashtags: ["#TestProduct", "#Shopee", "#โปรเด็ด"],
-      callToAction: "กดดูรายละเอียดและโปรโมชันได้เลย",
+  it("builds a ready publication plan", () => {
+    const plan = buildPublicationPlan(production, {
+      caption: "Test Product ราคา ฿499 จาก ฿799 ลด ฿300",
       productUrl: "https://example.com/product"
     });
-    expect(result.valid).toBe(true);
+    expect(plan.ready).toBe(true);
+    expect(plan.mediaPath).toBe("/tmp/final.mp4");
+    expect(plan.productUrl).toBe("https://example.com/product");
   });
 
-  it("rejects a package without a product URL", () => {
-    const result = validatePublishPackage({
-      videoPath: "/tmp/final.mp4",
-      caption: "Test Product ราคา 499 บาท",
-      hashtags: ["#TestProduct"],
-      callToAction: "กดดูรายละเอียดได้เลย",
-      productUrl: ""
+  it("rejects an empty target list", () => {
+    const errors = validatePublicationPlan({
+      targets: [],
+      caption: "Test Product ราคา ฿499",
+      productUrl: "https://example.com/product",
+      mediaPath: "/tmp/final.mp4",
+      ready: false
     });
-    expect(result.valid).toBe(false);
-  });
-
-  it("rejects a package without a final mp4", () => {
-    const result = validatePublishPackage({
-      videoPath: "",
-      caption: "Test Product ราคา 499 บาท",
-      hashtags: ["#TestProduct"],
-      callToAction: "กดดูรายละเอียดได้เลย",
-      productUrl: "https://example.com/product"
-    });
-    expect(result.valid).toBe(false);
+    expect(errors).toContain("publishing requires at least one target");
   });
 });
