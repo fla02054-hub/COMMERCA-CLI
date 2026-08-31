@@ -39,11 +39,7 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
 }
 function inferRepairStage(failedStage: WorkflowStage, error: string): WorkflowStage | undefined {
   const text = error.toLowerCase();
-  if (failedStage === "production") {
-    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content-creative";
-    if (text.includes("creative strategy") || text.includes("storyboard")) return "content-creative";
-    return "content-creative";
-  }
+  if (failedStage === "production") return "content-creative";
   if (failedStage === "qc") {
     if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url") || text.includes("creative") || text.includes("storyboard")) return "content-creative";
     if (text.includes("video") || text.includes("image") || text.includes("voice") || text.includes("subtitle")) return "production";
@@ -61,6 +57,12 @@ function qcReport(resultArtifacts: WorkflowArtifact[]): { passed?: unknown; revi
   return typeof report === "object" && report !== null ? report as { passed?: unknown; revisionStage?: WorkflowStage } : undefined;
 }
 function isTerminalStage(stage: WorkflowStage): boolean { return stage === "final-package"; }
+function hasFinalPackage(workflow: RuntimeWorkflow): boolean { return workflow.artifacts.some((item) => item.stage === "final-package" && item.type === "final-package"); }
+function markWorkflowCompleted(workflow: RuntimeWorkflow): void {
+  if (!hasFinalPackage(workflow)) throw new Error("Workflow cannot be completed before a final-package artifact is produced.");
+  workflow.state.currentStage = "final-package";
+  workflow.state.status = "completed";
+}
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
   const pauseAfterQc = options.pauseAfterQc ?? false; const autonomous = options.autonomous ?? false;
@@ -68,7 +70,7 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
   let stage = workflow.state.currentStage; let guard = 0;
   while (guard++ < 100) {
     const state = workflow.state.stages[STAGE_ORDER[stage] - 1]; if (!state) throw new Error(`Missing workflow state for stage: ${stage}`);
-    if (state.status === "completed" || state.status === "skipped") { if (stage === "qc" && pauseAfterQc && workflow.state.status === "awaiting-approval") return workflow; const next = WORKFLOW_STAGES[STAGE_ORDER[stage]]; if (!next) { workflow.state.status = "completed"; return workflow; } stage = next; continue; }
+    if (state.status === "completed" || state.status === "skipped") { if (stage === "qc" && pauseAfterQc && workflow.state.status === "awaiting-approval") return workflow; const next = WORKFLOW_STAGES[STAGE_ORDER[stage]]; if (!next) { markWorkflowCompleted(workflow); return workflow; } stage = next; continue; }
     workflow.state.currentStage = stage; workflow.state.transitionHistory.push(stage); state.status = "running"; state.attempts += 1; state.startedAt = new Date().toISOString();
     try {
       const context: StageContext = { workflowId: workflow.id, goal: workflow.goal, stage, artifacts: workflow.artifacts };
@@ -84,26 +86,26 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (autonomous && options.decideNextStage) {
         const decision = await options.decideNextStage(stage, workflow);
-        if (decision.action === "stop" && isTerminalStage(stage)) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
+        if (decision.action === "stop" && isTerminalStage(stage)) { markWorkflowCompleted(workflow); return workflow; }
         if (decision.action === "stop" && !isTerminalStage(stage)) {
           const forcedNext = WORKFLOW_STAGES[STAGE_ORDER[stage]];
           if (forcedNext) { next = forcedNext; workflow.artifacts.push({ stage, type: "agent-decision-override", data: { original: decision, action: "continue", nextStage: forcedNext, reason: "Non-terminal stage cannot stop the autonomous workflow." }, createdAt: new Date().toISOString() }); }
         }
         if (decision.nextStage && (transitionAllowed(stage, decision.nextStage) || ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)))) { if ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)) resetForRevision(workflow, decision.nextStage); next = decision.nextStage; }
       }
-      if (!next) { workflow.state.currentStage = stage; workflow.state.status = isTerminalStage(stage) ? "completed" : "failed"; return workflow; }
+      if (!next) { workflow.state.currentStage = stage; workflow.state.status = isTerminalStage(stage) ? "completed" : "failed"; if (workflow.state.status === "completed") markWorkflowCompleted(workflow); return workflow; }
       if (!transitionAllowed(stage, next) && !(autonomous && autonomousRevisionAllowed(stage, next))) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
       if (STAGE_ORDER[next] <= STAGE_ORDER[stage]) resetForRevision(workflow, next); stage = next;
     } catch (error) {
       state.error = error instanceof Error ? error.message : String(error);
       if (autonomous && options.decideNextStage && autonomousRevisions < maxAutonomousRevisions) {
         autonomousRevisions++; workflow.artifacts.push({ stage, type: "stage-failure", data: { stage, error: state.error, attempts: state.attempts }, createdAt: new Date().toISOString() });
-        state.status = "completed"; state.completedAt = new Date().toISOString(); workflow.state.status = "running";
+        state.status = "failed"; workflow.state.status = "running";
         const decision = await options.decideNextStage(stage, workflow);
         const repairStage = decision.nextStage && autonomousRevisionAllowed(stage, decision.nextStage) ? decision.nextStage : inferRepairStage(stage, state.error);
         workflow.artifacts.push({ stage, type: "agent-failure-decision", data: { ...decision, failedStage: stage, repairStage, revision: autonomousRevisions }, createdAt: new Date().toISOString() });
         if (decision.action !== "stop" && repairStage && autonomousRevisionAllowed(stage, repairStage)) { resetForRevision(workflow, repairStage); stage = repairStage; continue; }
-        state.status = "failed"; workflow.state.status = "failed"; return workflow;
+        workflow.state.status = "failed"; return workflow;
       }
       if (state.attempts < workflow.state.maxAttemptsPerStage) { state.status = "pending"; continue; }
       state.status = "failed"; workflow.state.status = "failed"; return workflow;
