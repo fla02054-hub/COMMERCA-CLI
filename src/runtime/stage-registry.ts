@@ -11,7 +11,7 @@ import { publishToFacebookPage } from "../publishing/facebook.js";
 import { rankProducts, scoreProducts } from "../product/index.js";
 import type { Product } from "../product/types.js";
 import type { ContentPackage } from "../content/index.js";
-import type { CreativeStrategy, ProductionPackage, FinalContentPackage, QcReport, PublicationRecord, PerformanceReport } from "./stage-artifacts.js";
+import type { CreativeStrategy, ProductionPackage, FinalContentPackage, QcReport, PublicationRecord } from "./stage-artifacts.js";
 
 function latest<T>(context: StageContext, type: string): T | undefined { return [...context.artifacts].reverse().find((item) => item.type === type)?.data as T | undefined; }
 export interface StageRegistryOptions { product?: Product; outputDir?: string; outputMp4?: string; production?: (creative: CreativeStrategy) => Promise<ProductionPackage>; }
@@ -37,24 +37,24 @@ function contentIntegrity(product: Product, content: ContentPackage): string[] {
   return issues;
 }
 function chooseRevisionStage(issues: string[]): QcReport["revisionStage"] {
-  if (issues.some((issue) => issue.includes("voice script") || issue.includes("subtitle script") || issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content-strategy";
-  if (issues.some((issue) => issue.includes("creative") || issue.includes("storyboard"))) return "creative-strategy";
+  if (issues.some((issue) => issue.includes("voice script") || issue.includes("subtitle script") || issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content";
+  if (issues.some((issue) => issue.includes("creative") || issue.includes("storyboard"))) return "creative";
   return "production";
 }
 export function createStageRegistry(options: StageRegistryOptions = {}): WorkflowStageRegistry {
   const registry = new WorkflowStageRegistry();
   const live = process.env.COMMERCA_MODE === "live";
-  registry.register(new FunctionStage("goal", async c => ({ artifacts: [artifact("goal", "goal", { text: c.goal })] })));
+
   registry.register(new FunctionStage("product-input", async () => {
     const p = options.product;
     const images = p?.images?.filter(Boolean) ?? (p?.image ? [p.image] : []);
     if (!p?.name || typeof p.price !== "number" || !p.url || !images.length) throw new Error("Manual product input requires name, price, url and at least one image.");
     return { artifacts: [artifact("product-input", "product-input", { ...p, image: p.image ?? images[0], images })] };
   }));
-  // One workflow boundary owns analysis, scoring and selection. Pure product helpers remain reusable.
+
   registry.register(new FunctionStage("product-analysis", async c => {
     const p = latest<Product>(c, "product-input");
-    if (!p) throw new Error("Product analysis requires manual product input.");
+    if (!p) throw new Error("Product analysis requires product input.");
     const analysis = rankProducts([p]);
     if (!analysis.length) throw new Error("Product analysis produced no result.");
     const scorecards = scoreProducts(analysis);
@@ -68,31 +68,34 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
       artifact("product-analysis", "selection", selected),
     ] };
   }));
-  registry.register(new FunctionStage("content-strategy", async c => {
+
+  registry.register(new FunctionStage("content", async c => {
     const selected = latest<{ product?: Product }>(c, "selection");
     const analysis = latest<ReturnType<typeof rankProducts>>(c, "product-analysis");
     const product = selected?.product;
     const evaluated = analysis?.find(x => x.product.id === product?.id);
-    if (!product || !evaluated) throw new Error("Content strategy requires the selected product evaluation.");
+    if (!product || !evaluated) throw new Error("Content requires the selected product evaluation.");
     const content = live || process.env.COMMERCA_USE_GEMINI === "1" ? await generateContentWithGemini(evaluated) : generateContent(evaluated);
     if (!product.url) throw new Error("Product URL is required for publishing.");
     if (content.productUrl !== product.url) throw new Error("Generated content URL does not match selected product.");
-    return { artifacts: [artifact("content-strategy", "content-package", content)] };
+    return { artifacts: [artifact("content", "content-package", content)] };
   }));
-  registry.register(new FunctionStage("creative-strategy", async c => {
+
+  registry.register(new FunctionStage("creative", async c => {
     const content = latest<ContentPackage>(c, "content-package");
-    if (!content) throw new Error("Creative strategy requires content package.");
+    if (!content) throw new Error("Creative requires content package.");
     const creative = buildCreativeStrategy(content);
     const issues = validateCreativeStrategy(creative);
-    if (issues.length) throw new Error(`Creative strategy validation failed: ${issues.join("; ")}`);
-    return { artifacts: [artifact("creative-strategy", "creative-strategy", creative)] };
+    if (issues.length) throw new Error(`Creative validation failed: ${issues.join("; ")}`);
+    return { artifacts: [artifact("creative", "creative-strategy", creative)] };
   }));
-  // Creative owns specification; production owns actual media generation.
+
   registry.register(new FunctionStage("production", async c => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
-    if (!creative) throw new Error("Production requires creative strategy.");
+    if (!creative) throw new Error("Production requires creative specification.");
     return { artifacts: [artifact("production", "production-package", options.production ? await options.production(creative) : await produceCreative(creative, { outputDir: options.outputDir, outputMp4: options.outputMp4 }))] };
   }));
+
   registry.register(new FunctionStage("qc", async c => {
     const p = latest<Product>(c, "product-input");
     const content = latest<ContentPackage>(c, "content-package");
@@ -110,56 +113,41 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     if (v) { try { if ((await stat(v)).size < 1000) issues.push("final video file is empty or invalid"); } catch { if (live) issues.push("final video file does not exist"); } }
     return { artifacts: [artifact("qc", "qc-report", { passed: issues.length === 0, issues, ...(issues.length ? { revisionStage: chooseRevisionStage(issues) } : {}) } satisfies QcReport)] };
   }));
-  // Publishing owns publication only; package assembly is deliberately separate.
-  registry.register(new FunctionStage("publishing", async c => {
-    const qc = latest<QcReport>(c, "qc-report");
-    if (!qc?.passed) throw new Error(`Publishing blocked: QC failed: ${qc?.issues?.join(", ") ?? "unknown"}`);
-    const p = latest<Product>(c, "product-input");
-    const content = latest<ContentPackage>(c, "content-package");
-    const prod = latest<ProductionPackage>(c, "production-package");
-    if (!p || !content || !prod) throw new Error("Publishing requires product, content and production outputs.");
-    if (!p.url || content.productUrl !== p.url) throw new Error("Publishing blocked: product URL is missing or mismatched.");
-    const videoPath = finalVideoPath(prod);
-    if (!videoPath) throw new Error("Publishing blocked: final video is missing.");
-    const firstComment = content.firstComment ?? `🛒 พิกัดสินค้า 👇\n🔗 ${p.url}`;
-    const organic: Record<string, unknown> = { status: live ? "publishing" : "ready", platform: "facebook", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: p.url, firstComment, videoPath };
-    let publishedOrganic = organic;
-    if (live) { const result = await publishToFacebookPage({ videoPath, caption: content.caption }); publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink }; }
-    return { artifacts: [artifact("publishing", "publication", { organic: publishedOrganic, ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url } })] };
-  }));
+
+  // Final Package owns the last-mile publication and package assembly so there is one owner for the final deliverable.
   registry.register(new FunctionStage("final-package", async c => {
     const qc = latest<QcReport>(c, "qc-report");
     const p = latest<Product>(c, "product-input");
     const content = latest<ContentPackage>(c, "content-package");
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
     const prod = latest<ProductionPackage>(c, "production-package");
-    const publish = latest<PublicationRecord>(c, "publication");
     if (!qc?.passed) throw new Error("Final package requires passed QC.");
-    if (!p || !content || !creative || !prod || !publish) throw new Error("Final package inputs are incomplete.");
+    if (!p || !content || !creative || !prod) throw new Error("Final package inputs are incomplete.");
     const videoPath = finalVideoPath(prod);
     if (!videoPath) throw new Error("Final package requires final video.");
+    if (!p.url || content.productUrl !== p.url) throw new Error("Final package blocked: product URL is missing or mismatched.");
+
     const firstComment = content.firstComment ?? `🛒 พิกัดสินค้า 👇\n🔗 ${p.url}`;
-    const finalPackage: FinalContentPackage = { product: p, content: { ...content, firstComment }, creative, production: { ...prod, video: { path: videoPath } }, qc, publish };
+    const organic: Record<string, unknown> = { status: live ? "publishing" : "ready", platform: "facebook", caption: content.caption, hashtags: content.hashtags, callToAction: content.callToAction, productUrl: p.url, firstComment, videoPath };
+    let publishedOrganic = organic;
+    if (live) {
+      const result = await publishToFacebookPage({ videoPath, caption: content.caption });
+      publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink };
+    }
+    const publication: PublicationRecord = { organic: publishedOrganic, ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url } };
+
+    const finalPackage: FinalContentPackage = { product: p, content: { ...content, firstComment }, creative, production: { ...prod, video: { path: videoPath } }, qc, publish: publication };
     const dir = options.outputDir ?? process.env.COMMERCA_OUTPUT_DIR ?? "./output";
     const path = options.outputMp4 ? join(dirname(options.outputMp4), "final-content-package.json") : `${dir}/final-content-package.json`;
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, JSON.stringify(finalPackage, null, 2), "utf8");
     await writeFile(`${dirname(path)}/post.txt`, `${content.caption}\n\n${firstComment}\n`, "utf8");
-    return { artifacts: [artifact("final-package", "final-package", finalPackage)] };
+    return { artifacts: [
+      artifact("final-package", "publication", publication),
+      artifact("final-package", "final-package", finalPackage),
+    ] };
   }));
-  registry.register(new FunctionStage("performance", async c => {
-    const publication = latest<PublicationRecord>(c, "publication");
-    if (!publication) throw new Error("Performance requires publication.");
-    return { artifacts: [artifact("performance", "performance-report", { reach: 0, ctr: 0, cpc: 0, conversion: 0, commission: 0, source: "no-live-metrics" } satisfies PerformanceReport)] };
-  }));
-  registry.register(new FunctionStage("decision-learning", async c => {
-    const performance = latest<PerformanceReport>(c, "performance-report");
-    const publication = latest<PublicationRecord>(c, "publication");
-    const product = latest<Product>(c, "product-input");
-    if (!product) throw new Error("Decision-learning requires product input.");
-    const hasMetrics = Boolean(performance && (Number(performance.reach) > 0 || Number(performance.ctr) > 0 || Number(performance.cpc) > 0 || Number(performance.conversion) > 0 || Number(performance.commission) > 0));
-    return { artifacts: [artifact("decision-learning", "decision", { outcome: hasMetrics ? "optimize" : "await-real-performance-data", evidence: hasMetrics ? performance : { source: "no-live-metrics", publicationReady: Boolean(publication), productId: product.id }, actions: hasMetrics ? ["analyze real metrics", "select the best optimization target", "re-run the affected content/creative stage"] : ["keep the tested package", "wait for real performance metrics before making an optimization decision"] })] };
-  }));
+
   for (const stage of WORKFLOW_STAGES) if (!registry.has(stage)) throw new Error(`Missing workflow stage handler: ${stage}`);
   return registry;
 }
