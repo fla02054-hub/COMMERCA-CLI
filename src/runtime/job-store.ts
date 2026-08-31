@@ -52,3 +52,26 @@ export async function listJobIds(): Promise<string[]> {
   }
   return [...ids].sort();
 }
+
+export async function listJobs(): Promise<SavedJob[]> {
+  const jobs: SavedJob[] = [];
+  for (const jobId of await listJobIds()) {
+    try {
+      jobs.push(await loadJob(jobId));
+    } catch {
+      // Ignore malformed job files while keeping healthy jobs available.
+    }
+  }
+  return jobs;
+}
+
+export async function latestJob(): Promise<SavedJob | undefined> {
+  const jobs = await listJobs();
+  return jobs
+    .filter((job) => job.workflow?.state)
+    .sort((a, b) => {
+      const aTime = a.workflow.state.updatedAt || a.workflow.state.createdAt || "";
+      const bTime = b.workflow.state.updatedAt || b.workflow.state.createdAt || "";
+      return bTime.localeCompare(aTime) || b.jobId.localeCompare(a.jobId);
+    })[0];
+}
