@@ -11,9 +11,9 @@ test("autonomous supervisor revises after QC failure and completes", async () =>
     registry.register(new FunctionStage(stage, async () => {
       if (stage === "qc") {
         qcRuns += 1;
-        return { artifacts: [{ stage, type: "qc-report", data: qcRuns === 1 ? { passed: false, issues: ["content title is missing"], revisionStage: "content-strategy" } : { passed: true, issues: [] }, createdAt: new Date().toISOString() }] };
+        return { artifacts: [{ stage, type: "qc-report", data: qcRuns === 1 ? { passed: false, issues: ["content title is missing"], revisionStage: "content-creative" } : { passed: true, issues: [] }, createdAt: new Date().toISOString() }] };
       }
-      return { artifacts: [{ stage, type: `${stage}-ok`, data: { run: stage === "content-strategy" ? qcRuns : 1 }, createdAt: new Date().toISOString() }] };
+      return { artifacts: [{ stage, type: `${stage}-ok`, data: { run: stage === "content-creative" ? qcRuns : 1 }, createdAt: new Date().toISOString() }] };
     }));
   }
 
@@ -24,9 +24,9 @@ test("autonomous supervisor revises after QC failure and completes", async () =>
 
   assert.equal(result.state.status, "completed");
   assert.equal(qcRuns, 2);
-  assert.equal(result.state.currentStage, "decision-learning");
+  assert.equal(result.state.currentStage, "final-package");
   assert.ok(result.artifacts.some((item) => item.type === "agent-decision"));
-  assert.equal(result.state.stages.find((stage) => stage.stage === "publishing")?.status, "completed");
+  assert.equal(result.state.stages.find((stage) => stage.stage === "final-package")?.status, "completed");
 });
 
 test("autonomous supervisor stops after revision budget", async () => {
