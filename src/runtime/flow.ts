@@ -25,6 +25,11 @@ const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]
   "final-package": ["qc", "production", "content-creative"],
 };
 
+// Keep the registry used for an in-process approval pause so an approval resume
+// continues with the exact same handlers (including test/injected providers).
+// Persisted jobs that resume in a new process still fall back to a fresh registry.
+const workflowRegistries = new WeakMap<RuntimeWorkflow, WorkflowStageRegistry>();
+
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
   if (!goal.trim()) throw new Error("Workflow goal is required.");
   return { id, goal: goal.trim(), state: createWorkflowBlueprint(), artifacts: [] };
@@ -65,6 +70,7 @@ function markWorkflowCompleted(workflow: RuntimeWorkflow): void {
 }
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
+  workflowRegistries.set(workflow, registry);
   const pauseAfterQc = options.pauseAfterQc ?? false; const autonomous = options.autonomous ?? false;
   const maxAutonomousRevisions = Math.max(0, options.maxAutonomousRevisions ?? 3); let autonomousRevisions = 0;
   let stage = workflow.state.currentStage; let guard = 0;
