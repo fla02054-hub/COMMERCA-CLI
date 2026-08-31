@@ -21,14 +21,14 @@ const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]
   "product-analysis": ["product-input"],
   "content-creative": ["product-analysis"],
   production: ["content-creative", "product-analysis"],
+  production: ["content-creative", "product-analysis"],
   qc: ["production", "content-creative", "product-analysis"],
   "final-package": ["qc", "production", "content-creative"],
 };
 
-// Keep the registry used for an in-process approval pause so an approval resume
-// continues with the exact same handlers (including test/injected providers).
-// Persisted jobs that resume in a new process still fall back to a fresh registry.
 const workflowRegistries = new WeakMap<RuntimeWorkflow, WorkflowStageRegistry>();
+
+export function getWorkflowRegistry(workflow: RuntimeWorkflow): WorkflowStageRegistry | undefined { return workflowRegistries.get(workflow); }
 
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
   if (!goal.trim()) throw new Error("Workflow goal is required.");
