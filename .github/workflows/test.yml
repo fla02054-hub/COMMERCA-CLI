@@ -22,6 +22,9 @@ jobs:
         run: ffmpeg -version
       - name: Core tests (no external providers)
         run: npm test
+      - name: Workflow E2E including QC repair cycle
+        if: success()
+        run: npm run workflow:e2e
       - name: Production real MP4 render test
         if: success()
         run: npm run test:production
