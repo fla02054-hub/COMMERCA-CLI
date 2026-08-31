@@ -19,21 +19,33 @@ async function send(channelId: string, content: string) {
   await discord(`/channels/${channelId}/messages`, { method: "POST", body: JSON.stringify({ content: content.slice(0, 1900) }) });
 }
 
+function isExplicitWorkRequest(text: string, hasAttachments: boolean): boolean {
+  if (hasAttachments) return true;
+  return /\b(ทำ|สร้าง|เริ่ม|จัดการ|วิเคราะห์|ค้น|หา|เลือก|ทำต่อ|ลงงาน|โพสต์|วิดีโอ|คลิป|คอนเทนต์)\b/i.test(text) && /\b(สินค้า|งาน|คอนเทนต์|โพสต์|วิดีโอ|คลิป|ทำต่อ|ให้|เลย|ตัว)/i.test(text);
+}
+
 async function runMessage(channelId: string, message: any) {
   const text = String(message.content ?? "").trim();
   const attachments = Array.isArray(message.attachments) ? message.attachments.filter((a: any) => typeof a?.url === "string").map((a: any) => ({ url: a.url, name: a.name, contentType: a.content_type })) : [];
   if (!text && !attachments.length) return;
   const prior = history(channelId);
-  remember(channelId, { role: "user", content: text || `[แนบไฟล์/รูป ${attachments.length} รายการ]`, at: new Date().toISOString() });
+  const userContent = text || `[แนบไฟล์/รูป ${attachments.length} รายการ]`;
+  remember(channelId, { role: "user", content: userContent, at: new Date().toISOString() });
   if (text === "/agent" || text === "/agent help") { await send(channelId, "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว"); remember(channelId, { role: "assistant", content: "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว", at: new Date().toISOString() }); return; }
-  const context = { source: "discord", channelId, userId: message.author.id, conversation: [...prior, { role: "user", content: text, at: new Date().toISOString() }], images: attachments, onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); } };
-  const looksLikeWork = /ทำ|สร้าง|ทำงาน|เริ่ม|จัดการ|วิเคราะห์|คอนเทนต์|สินค้า|โพสต์|วิดีโอ|คลิป|ลงงาน|เอาไป/i.test(text) || attachments.length > 0;
+  const context = { source: "discord", channelId, userId: message.author.id, conversation: [...prior, { role: "user", content: userContent, at: new Date().toISOString() }], images: attachments, onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); } };
+  const work = isExplicitWorkRequest(text, attachments.length > 0);
   let answer: string;
-  if (!looksLikeWork) answer = await agent.chat({ goal: text, context });
+  if (!work) answer = await agent.chat({ goal: text, context });
   else {
-    await send(channelId, "รับเรื่องครับ เดี๋ยว Aiden จัดการให้");
+    await send(channelId, "รับเรื่องครับ ผมจะลงมือทำให้เลย");
     const result = await agent.run({ goal: text, context });
-    answer = result.status === "completed" ? `เสร็จแล้วครับ ✅\nJob: ${result.jobId}\n${result.report}` : result.report;
+    if (result.status === "completed" && result.jobId) {
+      answer = `เสร็จแล้วครับ ✅\nJob: ${result.jobId}\n${result.report}`;
+    } else if (result.status === "needs_input") {
+      answer = result.report;
+    } else {
+      answer = `งานยังไม่สำเร็จ ❌\n${result.report}`;
+    }
   }
   remember(channelId, { role: "assistant", content: answer, at: new Date().toISOString() });
   await send(channelId, answer);
