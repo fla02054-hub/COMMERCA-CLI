@@ -37,8 +37,7 @@ function contentIntegrity(product: Product, content: ContentPackage): string[] {
   return issues;
 }
 function chooseRevisionStage(issues: string[]): QcReport["revisionStage"] {
-  if (issues.some((issue) => issue.includes("voice script") || issue.includes("subtitle script") || issue.includes("content") || issue.includes("hashtag") || issue.includes("URL"))) return "content";
-  if (issues.some((issue) => issue.includes("creative") || issue.includes("storyboard"))) return "creative";
+  if (issues.some((issue) => issue.includes("voice script") || issue.includes("subtitle script") || issue.includes("content") || issue.includes("hashtag") || issue.includes("URL") || issue.includes("creative") || issue.includes("storyboard"))) return "content-creative";
   return "production";
 }
 export function createStageRegistry(options: StageRegistryOptions = {}): WorkflowStageRegistry {
@@ -69,30 +68,28 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     ] };
   }));
 
-  registry.register(new FunctionStage("content", async c => {
+  // Content + Creative are one planning boundary: decide what to say and exactly how to present it.
+  registry.register(new FunctionStage("content-creative", async c => {
     const selected = latest<{ product?: Product }>(c, "selection");
     const analysis = latest<ReturnType<typeof rankProducts>>(c, "product-analysis");
     const product = selected?.product;
     const evaluated = analysis?.find(x => x.product.id === product?.id);
-    if (!product || !evaluated) throw new Error("Content requires the selected product evaluation.");
+    if (!product || !evaluated) throw new Error("Content & creative requires the selected product evaluation.");
     const content = live || process.env.COMMERCA_USE_GEMINI === "1" ? await generateContentWithGemini(evaluated) : generateContent(evaluated);
     if (!product.url) throw new Error("Product URL is required for publishing.");
     if (content.productUrl !== product.url) throw new Error("Generated content URL does not match selected product.");
-    return { artifacts: [artifact("content", "content-package", content)] };
-  }));
-
-  registry.register(new FunctionStage("creative", async c => {
-    const content = latest<ContentPackage>(c, "content-package");
-    if (!content) throw new Error("Creative requires content package.");
     const creative = buildCreativeStrategy(content);
-    const issues = validateCreativeStrategy(creative);
-    if (issues.length) throw new Error(`Creative validation failed: ${issues.join("; ")}`);
-    return { artifacts: [artifact("creative", "creative-strategy", creative)] };
+    const creativeIssues = validateCreativeStrategy(creative);
+    if (creativeIssues.length) throw new Error(`Creative validation failed: ${creativeIssues.join("; ")}`);
+    return { artifacts: [
+      artifact("content-creative", "content-package", content),
+      artifact("content-creative", "creative-strategy", creative),
+    ] };
   }));
 
   registry.register(new FunctionStage("production", async c => {
     const creative = latest<CreativeStrategy>(c, "creative-strategy");
-    if (!creative) throw new Error("Production requires creative specification.");
+    if (!creative) throw new Error("Production requires content & creative specification.");
     return { artifacts: [artifact("production", "production-package", options.production ? await options.production(creative) : await produceCreative(creative, { outputDir: options.outputDir, outputMp4: options.outputMp4 }))] };
   }));
 
@@ -114,7 +111,7 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
     return { artifacts: [artifact("qc", "qc-report", { passed: issues.length === 0, issues, ...(issues.length ? { revisionStage: chooseRevisionStage(issues) } : {}) } satisfies QcReport)] };
   }));
 
-  // Final Package owns the last-mile publication and package assembly so there is one owner for the final deliverable.
+  // Final Package owns last-mile publication and package assembly so there is one owner for the final deliverable.
   registry.register(new FunctionStage("final-package", async c => {
     const qc = latest<QcReport>(c, "qc-report");
     const p = latest<Product>(c, "product-input");
@@ -135,7 +132,6 @@ export function createStageRegistry(options: StageRegistryOptions = {}): Workflo
       publishedOrganic = { ...organic, status: "published", provider: result.provider, postId: result.id, permalink: result.permalink };
     }
     const publication: PublicationRecord = { organic: publishedOrganic, ads: { status: "ready", platform: "meta", videoPath, productUrl: p.url } };
-
     const finalPackage: FinalContentPackage = { product: p, content: { ...content, firstComment }, creative, production: { ...prod, video: { path: videoPath } }, qc, publish: publication };
     const dir = options.outputDir ?? process.env.COMMERCA_OUTPUT_DIR ?? "./output";
     const path = options.outputMp4 ? join(dirname(options.outputMp4), "final-content-package.json") : `${dir}/final-content-package.json`;
