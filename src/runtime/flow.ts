@@ -8,18 +8,23 @@ export interface AgentNextDecision { action?: "continue" | "revise" | "stop" | "
 export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; autonomous?: boolean; maxAutonomousRevisions?: number; decideNextStage?: (stage: WorkflowStage, workflow: RuntimeWorkflow) => Promise<AgentNextDecision>; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["content-strategy"],
-  "content-strategy": ["creative-strategy"], "creative-strategy": ["production"], production: ["qc"],
-  qc: ["publishing", "creative-strategy", "production", "content-strategy"], publishing: ["final-package"],
-  "final-package": ["performance"], performance: ["decision-learning"], "decision-learning": ["content-strategy"]
+  "product-input": ["product-analysis"],
+  "product-analysis": ["content"],
+  content: ["creative"],
+  creative: ["production"],
+  production: ["qc"],
+  qc: ["final-package", "creative", "production", "content"],
+  "final-package": [],
 };
 
 const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: [], "product-input": [], "product-analysis": ["product-input"], "content-strategy": ["product-analysis"],
-  "creative-strategy": ["content-strategy", "product-analysis"], production: ["creative-strategy", "content-strategy"],
-  qc: ["production", "creative-strategy", "content-strategy"], publishing: ["qc", "production"],
-  "final-package": ["publishing", "qc", "production"], performance: ["publishing", "final-package", "qc"],
-  "decision-learning": ["performance", "publishing", "final-package", "production", "creative-strategy", "content-strategy"]
+  "product-input": [],
+  "product-analysis": ["product-input"],
+  content: ["product-analysis"],
+  creative: ["content", "product-analysis"],
+  production: ["creative", "content"],
+  qc: ["production", "creative", "content"],
+  "final-package": ["qc", "production", "creative", "content"],
 };
 
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
@@ -37,18 +42,18 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
 function inferRepairStage(failedStage: WorkflowStage, error: string): WorkflowStage | undefined {
   const text = error.toLowerCase();
   if (failedStage === "production") {
-    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content-strategy";
-    if (text.includes("creative strategy") || text.includes("storyboard")) return "creative-strategy";
-    return "creative-strategy";
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content";
+    if (text.includes("creative strategy") || text.includes("storyboard")) return "creative";
+    return "creative";
   }
   if (failedStage === "qc") {
-    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url")) return "content-strategy";
-    if (text.includes("creative") || text.includes("storyboard")) return "creative-strategy";
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url")) return "content";
+    if (text.includes("creative") || text.includes("storyboard")) return "creative";
     if (text.includes("video") || text.includes("image") || text.includes("voice") || text.includes("subtitle")) return "production";
   }
   return undefined;
 }
-export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "decision-learning"): RuntimeWorkflow {
+export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "content"): RuntimeWorkflow {
   if (workflow.state.status !== "completed" && workflow.state.status !== "failed") return workflow;
   resetForRevision(workflow, startStage); workflow.state.status = "running"; workflow.state.currentStage = startStage; workflow.state.approval = undefined;
   workflow.artifacts.push({ stage: startStage, type: "agent-reopened-cycle", data: { reason: "Autonomous agent is taking ownership of the next optimization cycle.", startStage }, createdAt: new Date().toISOString() });
@@ -58,7 +63,7 @@ function qcReport(resultArtifacts: WorkflowArtifact[]): { passed?: unknown; revi
   const report = resultArtifacts.find((item) => item.type === "qc-report")?.data;
   return typeof report === "object" && report !== null ? report as { passed?: unknown; revisionStage?: WorkflowStage } : undefined;
 }
-function isTerminalStage(stage: WorkflowStage): boolean { return stage === "decision-learning"; }
+function isTerminalStage(stage: WorkflowStage): boolean { return stage === "final-package"; }
 
 export async function executeWorkflow(workflow: RuntimeWorkflow, registry: WorkflowStageRegistry, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
   const pauseAfterQc = options.pauseAfterQc ?? false; const autonomous = options.autonomous ?? false;
@@ -73,12 +78,12 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const result = await registry.get(stage).execute(context); workflow.artifacts.push(...result.artifacts); state.artifactTypes.push(...result.artifacts.map((item) => item.type));
       const report = stage === "qc" ? qcReport(result.artifacts) : undefined;
       if (stage === "qc" && report?.passed === false && !result.nextStage) {
-        const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content-strategy";
+        const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content";
         if (autonomous && autonomousRevisions < maxAutonomousRevisions) { autonomousRevisions++; state.status = "completed"; state.completedAt = new Date().toISOString(); workflow.artifacts.push({ stage: "qc", type: "agent-decision", data: { action: "revise", revision: autonomousRevisions, nextStage: revisionStage, issues: [report] }, createdAt: new Date().toISOString() }); workflow.state.status = "running"; resetForRevision(workflow, revisionStage); stage = revisionStage; continue; }
-        state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
+        state.status = "failed"; state.error = "QC failed; revision is required before final package."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
-      if (stage === "qc" && pauseAfterQc) { workflow.state.currentStage = "qc"; workflow.state.status = "awaiting-approval"; workflow.state.approval = { requestedAt: new Date().toISOString() }; workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the package inputs, then approve to continue publishing." }, createdAt: new Date().toISOString() }); return workflow; }
+      if (stage === "qc" && pauseAfterQc) { workflow.state.currentStage = "qc"; workflow.state.status = "awaiting-approval"; workflow.state.approval = { requestedAt: new Date().toISOString() }; workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the package inputs, then approve to create the final package." }, createdAt: new Date().toISOString() }); return workflow; }
       let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (autonomous && options.decideNextStage) {
         const decision = await options.decideNextStage(stage, workflow);
@@ -88,7 +93,6 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
           if (forcedNext) { next = forcedNext; workflow.artifacts.push({ stage, type: "agent-decision-override", data: { original: decision, action: "continue", nextStage: forcedNext, reason: "Non-terminal stage cannot stop the autonomous workflow." }, createdAt: new Date().toISOString() }); }
         }
         if (decision.nextStage && (transitionAllowed(stage, decision.nextStage) || ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)))) { if ((decision.action === "revise" || decision.action === "optimize") && autonomousRevisionAllowed(stage, decision.nextStage)) resetForRevision(workflow, decision.nextStage); next = decision.nextStage; }
-        if (decision.action === "publish" && transitionAllowed(stage, "publishing")) next = "publishing";
       }
       if (!next) { workflow.state.currentStage = stage; workflow.state.status = isTerminalStage(stage) ? "completed" : "failed"; return workflow; }
       if (!transitionAllowed(stage, next) && !(autonomous && autonomousRevisionAllowed(stage, next))) throw new Error(`Invalid workflow transition: ${stage} -> ${next}`);
