@@ -1,1 +1,0 @@
-// Gemini provider removed. COMMERCA-CLI uses Groq exclusively.
