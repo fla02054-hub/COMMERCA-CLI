@@ -1,8 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import type { Product } from "../product/types.js";
-import { runAutonomousAgent, type AutonomousAgentResult } from "../runtime/autonomous-agent.js";
-import { saveJob } from "../runtime/job-store.js";
+import { runAutonomousAgent, resumeAutonomousAgent, type AutonomousAgentResult } from "../runtime/autonomous-agent.js";
+import { latestJob, listJobs, saveJob, type SavedJob } from "../runtime/job-store.js";
 
 export type AgentTask = { goal: string; context?: Record<string, unknown> };
 export type AgentResult = { status: "completed" | "needs_input" | "failed"; goal: string; report: string; jobId?: string; decisions?: string[]; cycles?: number };
@@ -10,8 +10,7 @@ export type AgentResult = { status: "completed" | "needs_input" | "failed"; goal
 const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 type GeminiPart = { text?: string; inline_data?: { mime_type: string; data: string } };
-
-type Intent = { mode: "chat" | "work"; reason: string };
+type Intent = { mode: "chat" | "work" | "job"; reason: string };
 
 function loadLocalEnv() {
   const file = path.join(process.cwd(), ".env");
@@ -58,14 +57,55 @@ async function classifyIntent(task: AgentTask): Promise<Intent> {
   const value = JSON.parse(extractJson(await gemini([{ text: [
     "คุณคือ Aiden ผู้ช่วยส่วนตัวของเจ้าของ COMMERCA.",
     "จำแนกเจตนาของข้อความล่าสุดจากบริบทสนทนา.",
-    "chat = การพูดคุย/ถามความคิดเห็น/คุยต่อ โดยยังไม่ได้สั่งให้ระบบลงมือทำ.",
-    "work = ผู้ใช้สั่งให้ค้นหา เลือก วิเคราะห์ สร้าง ทำงาน ผลิต ตรวจ หรือจัดการบางอย่าง.",
-    "ถ้าผู้ใช้ใช้คำสั่งทำงานโดยนัย เช่น 'เอาตัวที่ดีที่สุดมาแล้วทำเลย' ให้เป็น work.",
-    "คืน JSON เท่านั้น: {mode:'chat'|'work',reason:string}.",
+    "chat = การพูดคุยหรือถามความคิดเห็น โดยยังไม่ได้สั่งให้ระบบลงมือทำ.",
+    "work = ผู้ใช้สั่งให้ค้นหา เลือก วิเคราะห์ สร้าง ผลิต ตรวจ หรือจัดการงานใหม่.",
+    "job = ผู้ใช้กำลังอ้างถึงงาน/Job ที่มีอยู่แล้ว เช่น ตรวจงานล่าสุด ดูสถานะ Job หา Job ที่ค้างหรือผิดพลาด ส่ง Job ID หรือทำงานเดิมต่อ/resume.",
+    "ถ้าผู้ใช้พูดโดยนัย เช่น 'เอางานเดิมมาทำต่อ' ให้เป็น job แม้ไม่ใช้คำว่า Job ID.",
+    "คืน JSON เท่านั้น: {mode:'chat'|'work'|'job',reason:string}.",
     `บริบท:\n${historyText(task.context)}`,
     `ข้อความล่าสุด: ${task.goal}`
   ].join("\n") }], task.context, 0))) as Partial<Intent>;
+  if (value.mode === "job") return { mode: "job", reason: String(value.reason || "ผู้ใช้กำลังจัดการงานที่มีอยู่แล้ว") };
   return value.mode === "work" ? { mode: "work", reason: String(value.reason || "ผู้ใช้สั่งให้ลงมือทำ") } : { mode: "chat", reason: String(value.reason || "เป็นการสนทนา") };
+}
+
+function productFromJob(job: SavedJob): Product | undefined {
+  const artifacts = job.workflow?.artifacts ?? [];
+  const input = [...artifacts].reverse().find((item: any) => item.type === "product-input")?.data as Partial<Product> | undefined;
+  if (!input?.name) return undefined;
+  return input as Product;
+}
+
+function summarizeJob(job: SavedJob) {
+  const state = job.workflow.state as any;
+  return { jobId: job.jobId, status: state?.status, currentStage: state?.currentStage, updatedAt: state?.updatedAt, createdAt: state?.createdAt };
+}
+
+async function handleExistingJobs(task: AgentTask, intent: Intent): Promise<AgentResult> {
+  const jobs = await listJobs();
+  if (!jobs.length) return { status: "completed", goal: task.goal, report: "ตรวจสอบ Job Store แล้วครับ ตอนนี้ยังไม่มี Job ที่บันทึกอยู่ในระบบ" };
+  const summaries = jobs.map(summarizeJob);
+  const latest = await latestJob();
+  const wantsContinue = await gemini([{ text: [
+    "คุณคือ Aiden. ตัดสินใจว่าผู้ใช้ต้องการเพียงรายงาน Job หรือสั่งให้ทำ Job เดิมต่อ.",
+    "คืน JSON เท่านั้น: {continue:boolean, jobId:string|null}.",
+    `งานที่มีอยู่จริง:\n${JSON.stringify(summaries)}`,
+    `งานล่าสุดตามเวลาในระบบ: ${latest?.jobId ?? "none"}`,
+    `คำขอ: ${task.goal}`,
+    `เหตุผล intent: ${intent.reason}`
+  ].join("\n") }], task.context, 0);
+  const decision = JSON.parse(extractJson(wantsContinue)) as { continue?: boolean; jobId?: string | null };
+  const selected = decision.jobId ? jobs.find(j => j.jobId === decision.jobId) : latest;
+  if (!selected) return { status: "completed", goal: task.goal, report: JSON.stringify(summaries, null, 2) };
+  if (!decision.continue) return { status: "completed", goal: task.goal, report: JSON.stringify(summaries, null, 2), jobId: selected.jobId };
+  const product = productFromJob(selected);
+  if (!product) return { status: "needs_input", goal: task.goal, report: `พบ ${selected.jobId} จริง แต่ Job นี้ไม่มีข้อมูล product-input ที่เพียงพอสำหรับ resume` , jobId: selected.jobId };
+  const outputDir = typeof task.context?.outputDir === "string" ? task.context.outputDir : path.join(process.env.COMMERCA_OUTPUT_ROOT ?? "./output", selected.jobId);
+  const outputMp4 = typeof task.context?.outputMp4 === "string" ? task.context.outputMp4 : path.join(outputDir, "final.mp4");
+  const result: AutonomousAgentResult = await resumeAutonomousAgent(selected.workflow, product, { apiKey: typeof task.context?.geminiApiKey === "string" ? task.context.geminiApiKey : undefined, model: typeof task.context?.geminiModel === "string" ? task.context.geminiModel : undefined, outputDir, outputMp4, maxCycles: 20, maxAutonomousRevisions: 5, onProgress: typeof task.context?.onProgress === "function" ? task.context.onProgress as (message: string) => void : undefined });
+  await saveJob(selected.jobId, result.workflow);
+  const status = result.workflow.state.status === "completed" ? "completed" : result.workflow.state.status === "failed" ? "failed" : "needs_input";
+  return { status, goal: task.goal, report: JSON.stringify({ jobId: selected.jobId, status: result.workflow.state.status, stage: result.workflow.state.currentStage, decisions: result.decisions }, null, 2), jobId: selected.jobId, decisions: result.decisions, cycles: result.cycles };
 }
 
 async function understandProduct(goal: string, context?: Record<string, unknown>): Promise<Product | undefined> {
@@ -110,6 +150,7 @@ export class AIAgent {
     try {
       const intent = await classifyIntent(task);
       if (intent.mode === "chat") return { status: "completed", goal: task.goal, report: await this.chat(task) };
+      if (intent.mode === "job") return await handleExistingJobs(task, intent);
 
       const product = await understandProduct(task.goal, task.context);
       if (!product) {
