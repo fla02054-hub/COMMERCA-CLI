@@ -24,20 +24,13 @@ export function analyzeProduct(product: Product): ProductAnalysis {
     contentPotential: scoreContentPotential(product),
   };
 
-  const score =
-    factors.price +
-    factors.commission +
-    factors.demand +
-    factors.socialProof +
-    factors.promotion +
-    factors.contentPotential;
+  const score = factors.price + factors.commission + factors.demand + factors.socialProof + factors.promotion + factors.contentPotential;
 
-  return {
-    product,
-    score,
-    factors,
-    reasons: buildReasons(product, factors),
-  };
+  return { product, score, factors, reasons: buildReasons(product, factors) };
+}
+
+export function rankProducts(products: Product[]): ProductAnalysis[] {
+  return products.map(analyzeProduct).sort((a, b) => b.score - a.score);
 }
 
 function scorePrice(product: Product): number {
@@ -65,10 +58,7 @@ function scoreDemand(product: Product): number {
 }
 
 function scoreSocialProof(product: Product): number {
-  if (product.rating === undefined || product.reviewCount === undefined) {
-    return 0;
-  }
-
+  if (product.rating === undefined || product.reviewCount === undefined) return 0;
   if (product.rating >= 4.8 && product.reviewCount >= 1000) return 15;
   if (product.rating >= 4.5 && product.reviewCount >= 500) return 12;
   if (product.rating >= 4.0) return 8;
@@ -85,33 +75,21 @@ function scorePromotion(product: Product): number {
 
 function scoreContentPotential(product: Product): number {
   let score = 0;
-
   if (product.name) score += 3;
   if (product.promotion) score += 3;
   if (product.url) score += 2;
   if (product.originalPrice !== undefined) score += 2;
-
   return score;
 }
 
-function buildReasons(
-  product: Product,
-  factors: ProductAnalysis["factors"],
-): string[] {
+function buildReasons(product: Product, factors: ProductAnalysis["factors"]): string[] {
   const reasons: string[] = [];
-
   if (factors.price >= 12) reasons.push("attractive price range");
   if (factors.commission >= 15) reasons.push("strong commission");
   if (factors.demand >= 15) reasons.push("strong sales demand");
   if (factors.socialProof >= 12) reasons.push("strong social proof");
   if (factors.promotion >= 8) reasons.push("strong promotion");
-  if (factors.contentPotential >= 7) {
-    reasons.push("good content potential");
-  }
-
-  if (reasons.length === 0) {
-    reasons.push("insufficient product data");
-  }
-
+  if (factors.contentPotential >= 7) reasons.push("good content potential");
+  if (reasons.length === 0) reasons.push("insufficient product data");
   return reasons;
 }
