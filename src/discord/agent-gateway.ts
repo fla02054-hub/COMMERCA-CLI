@@ -21,7 +21,12 @@ async function send(channelId: string, content: string) {
 
 function isExplicitWorkRequest(text: string, hasAttachments: boolean): boolean {
   if (hasAttachments) return true;
-  return /\b(ทำ|สร้าง|เริ่ม|จัดการ|วิเคราะห์|ค้น|หา|เลือก|ทำต่อ|ลงงาน|โพสต์|วิดีโอ|คลิป|คอนเทนต์)\b/i.test(text) && /\b(สินค้า|งาน|คอนเทนต์|โพสต์|วิดีโอ|คลิป|ทำต่อ|ให้|เลย|ตัว)/i.test(text);
+  const normalized = text.trim();
+  if (!normalized) return false;
+  // Treat clear action-oriented natural language as work. Keep casual questions/chat out.
+  const action = /(ทำ|สร้าง|เริ่ม|จัดการ|วิเคราะห์|ค้น|หา|เลือก|ทำต่อ|ลงงาน|โพสต์|วิดีโอ|คลิป|คอนเทนต์|ตรวจ|เช็ก|เช็ค|ดำเนินการ|รัน|แก้|แก้ไข|สรุปงาน)/i.test(normalized);
+  const object = /(สินค้า|งาน|คอนเทนต์|โพสต์|วิดีโอ|คลิป|ทำต่อ|job|งานล่าสุด|สถานะ|ขั้นตอน|workflow|ระบบ|โปรแกรม|ให้|เลย|ตัว)/i.test(normalized);
+  return action && object;
 }
 
 async function runMessage(channelId: string, message: any) {
@@ -34,11 +39,14 @@ async function runMessage(channelId: string, message: any) {
   if (text === "/agent" || text === "/agent help") { await send(channelId, "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว"); remember(channelId, { role: "assistant", content: "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว", at: new Date().toISOString() }); return; }
   const context = { source: "discord", channelId, userId: message.author.id, conversation: [...prior, { role: "user", content: userContent, at: new Date().toISOString() }], images: attachments, onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); } };
   const work = isExplicitWorkRequest(text, attachments.length > 0);
+  console.log(`[Aiden] Discord message received | work=${work} | text=${JSON.stringify(text.slice(0, 160))}`);
   let answer: string;
   if (!work) answer = await agent.chat({ goal: text, context });
   else {
     await send(channelId, "รับเรื่องครับ ผมจะลงมือทำให้เลย");
+    console.log("[Aiden] Starting agent.run()");
     const result = await agent.run({ goal: text, context });
+    console.log(`[Aiden] agent.run() finished | status=${result.status} | jobId=${result.jobId ?? "none"}`);
     if (result.status === "completed" && result.jobId) {
       answer = `เสร็จแล้วครับ ✅\nJob: ${result.jobId}\n${result.report}`;
     } else if (result.status === "needs_input") {
