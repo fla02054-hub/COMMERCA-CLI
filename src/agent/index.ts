@@ -52,7 +52,7 @@ async function understandProduct(goal: string, context: Record<string, unknown> 
 }
 
 export class AIAgent {
-  readonly name = "AI Agent";
+  readonly name = "Aiden";
   readonly role = "Autonomous AI agent with Gemini as its model, operating COMMERCA as a tool";
 
   async run(task: AgentTask): Promise<AgentResult> {
