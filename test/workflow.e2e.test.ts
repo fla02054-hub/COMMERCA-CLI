@@ -8,8 +8,16 @@ import type { Product } from "../src/product/types.js";
 
 const fixtureProduct: Product = { id:"e2e-product-1",name:"COMMERCA E2E Test Product",image:"fixture://product-1",url:"https://example.invalid/product/1",price:299,originalPrice:599,discount:50,commission:100,rating:4.9,reviewCount:1500,salesCount:12000,promotion:"E2E promotion",source:"e2e-fixture",discoveredAt:new Date().toISOString() };
 
+const deterministicProduction = async () => ({
+  image: "fixture://final-image",
+  video: { path: "fixture://final-video" },
+  voice: "fixture://voice",
+  subtitle: "fixture://subtitle",
+  editing: { storyboard: ["fixture scene"], prompts: ["fixture prompt"] },
+});
+
 test("COMMERCA six-stage direct-product workflow completes without search or research", async()=>{
-  const result=await executeWorkflow(createRuntimeWorkflow(fixtureProduct.name),createStageRegistry({product:fixtureProduct}));
+  const result=await executeWorkflow(createRuntimeWorkflow(fixtureProduct.name),createStageRegistry({product:fixtureProduct,production:deterministicProduction}));
   assert.equal(result.state.status,"completed"); assert.equal(result.state.stages.length,6);
   assert.deepEqual(result.state.stages.map(s=>s.status),WORKFLOW_STAGES.map(()=>"completed"));
   assert.deepEqual(result.state.transitionHistory,WORKFLOW_STAGES); assert.equal(result.state.currentStage,"final-package");
