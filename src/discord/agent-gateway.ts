@@ -19,41 +19,69 @@ async function send(channelId: string, content: string) {
   await discord(`/channels/${channelId}/messages`, { method: "POST", body: JSON.stringify({ content: content.slice(0, 1900) }) });
 }
 
-function isExplicitWorkRequest(text: string, hasAttachments: boolean): boolean {
-  if (hasAttachments) return true;
-  const normalized = text.trim();
-  if (!normalized) return false;
-  // Treat clear action-oriented natural language as work. Keep casual questions/chat out.
-  const action = /(ทำ|สร้าง|เริ่ม|จัดการ|วิเคราะห์|ค้น|หา|เลือก|ทำต่อ|ลงงาน|โพสต์|วิดีโอ|คลิป|คอนเทนต์|ตรวจ|เช็ก|เช็ค|ดำเนินการ|รัน|แก้|แก้ไข|สรุปงาน)/i.test(normalized);
-  const object = /(สินค้า|งาน|คอนเทนต์|โพสต์|วิดีโอ|คลิป|ทำต่อ|job|งานล่าสุด|สถานะ|ขั้นตอน|workflow|ระบบ|โปรแกรม|ให้|เลย|ตัว)/i.test(normalized);
-  return action && object;
+function extractImageUrls(text: string): string[] {
+  const urls = text.match(/https?:\/\/[^\s<>]+/gi) ?? [];
+  return urls
+    .map((url) => url.replace(/[),.!?]+$/, ""))
+    .filter((url) => /\.(?:png|jpe?g|webp|gif)(?:\?.*)?$/i.test(url) || /img\.susercontent\.com/i.test(url))
+    .slice(0, 4);
+}
+
+function extractAllUrls(text: string): string[] {
+  return (text.match(/https?:\/\/[^\s<>]+/gi) ?? [])
+    .map((url) => url.replace(/[),.!?]+$/, ""))
+    .slice(0, 12);
 }
 
 async function runMessage(channelId: string, message: any) {
   const text = String(message.content ?? "").trim();
-  const attachments = Array.isArray(message.attachments) ? message.attachments.filter((a: any) => typeof a?.url === "string").map((a: any) => ({ url: a.url, name: a.name, contentType: a.content_type })) : [];
+  const attachments = Array.isArray(message.attachments)
+    ? message.attachments
+        .filter((a: any) => typeof a?.url === "string")
+        .map((a: any) => ({ url: a.url, name: a.name, contentType: a.content_type }))
+    : [];
+  const imageUrls = extractImageUrls(text);
+  const allUrls = extractAllUrls(text);
   if (!text && !attachments.length) return;
+
   const prior = history(channelId);
   const userContent = text || `[แนบไฟล์/รูป ${attachments.length} รายการ]`;
   remember(channelId, { role: "user", content: userContent, at: new Date().toISOString() });
-  if (text === "/agent" || text === "/agent help") { await send(channelId, "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว"); remember(channelId, { role: "assistant", content: "ได้ครับ ผม Aiden พร้อมคุยและรับงานแล้ว", at: new Date().toISOString() }); return; }
-  const context = { source: "discord", channelId, userId: message.author.id, conversation: [...prior, { role: "user", content: userContent, at: new Date().toISOString() }], images: attachments, onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); } };
-  const work = isExplicitWorkRequest(text, attachments.length > 0);
-  console.log(`[Aiden] Discord message received | work=${work} | text=${JSON.stringify(text.slice(0, 160))}`);
+
+  if (text === "/agent" || text === "/agent help") {
+    await send(channelId, "ได้ครับ ผม Aiden พร้อมรับข้อมูลและจัดการงานให้เอง");
+    remember(channelId, { role: "assistant", content: "ได้ครับ ผม Aiden พร้อมรับข้อมูลและจัดการงานให้เอง", at: new Date().toISOString() });
+    return;
+  }
+
+  const context = {
+    source: "discord",
+    channelId,
+    userId: message.author.id,
+    conversation: [...prior, { role: "user", content: userContent, at: new Date().toISOString() }],
+    images: [...attachments, ...imageUrls.map((url) => ({ url, contentType: "image/url" }))].slice(0, 4),
+    urls: allUrls,
+    onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); }
+  };
+
+  // Every normal message goes to Aiden. Aiden itself decides whether it is chat,
+  // a new job, or an existing-job operation. The gateway does not require a
+  // rigid command vocabulary, so the owner can send text, images, URLs, or a mix.
+  console.log(`[Aiden] Discord message received | input=autonomous | text=${JSON.stringify(text.slice(0, 160))}`);
+  await send(channelId, "รับเรื่องครับ ผมจะวิเคราะห์ข้อมูลและจัดการให้เอง");
+  console.log("[Aiden] Starting agent.run()");
+  const result = await agent.run({ goal: text, context });
+  console.log(`[Aiden] agent.run() finished | status=${result.status} | jobId=${result.jobId ?? "none"}`);
+
   let answer: string;
-  if (!work) answer = await agent.chat({ goal: text, context });
-  else {
-    await send(channelId, "รับเรื่องครับ ผมจะลงมือทำให้เลย");
-    console.log("[Aiden] Starting agent.run()");
-    const result = await agent.run({ goal: text, context });
-    console.log(`[Aiden] agent.run() finished | status=${result.status} | jobId=${result.jobId ?? "none"}`);
-    if (result.status === "completed" && result.jobId) {
-      answer = `เสร็จแล้วครับ ✅\nJob: ${result.jobId}\n${result.report}`;
-    } else if (result.status === "needs_input") {
-      answer = result.report;
-    } else {
-      answer = `งานยังไม่สำเร็จ ❌\n${result.report}`;
-    }
+  if (result.status === "completed" && result.jobId) {
+    answer = `ดำเนินการเสร็จแล้วครับ ✅\nJob: ${result.jobId}\n${result.report}`;
+  } else if (result.status === "completed") {
+    answer = result.report;
+  } else if (result.status === "needs_input") {
+    answer = result.report;
+  } else {
+    answer = `งานยังไม่สำเร็จ ❌\n${result.report}`;
   }
   remember(channelId, { role: "assistant", content: answer, at: new Date().toISOString() });
   await send(channelId, answer);
