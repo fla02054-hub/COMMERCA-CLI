@@ -18,30 +18,19 @@ const anchi: Product = {
   images: ["https://example.com/anchi.jpg"],
 };
 
-test("direct product identity is propagated through every production stage", async () => {
-  const production = {
-    image: { path: "/tmp/anchi-image.jpg" },
-    video: { path: "/tmp/anchi-final.mp4" },
-    voice: { path: "/tmp/anchi-voice.wav" },
-    subtitle: { path: "/tmp/anchi-subtitle.srt" },
-  };
-  const result = await executeWorkflow(
-    createRuntimeWorkflow(anchi.name),
-    createStageRegistry({ product: anchi, production: async () => production as any }),
-  );
-
+test("direct product identity is propagated through the consolidated workflow", async () => {
+  const production = { image: { path: "/tmp/anchi-image.jpg" }, video: { path: "/tmp/anchi-final.mp4" }, voice: { path: "/tmp/anchi-voice.wav" }, subtitle: { path: "/tmp/anchi-subtitle.srt" } };
+  const result = await executeWorkflow(createRuntimeWorkflow(anchi.name), createStageRegistry({ product: anchi, production: async () => production as any }));
   assert.equal(result.state.status, "completed");
-  const productProfile = result.artifacts.find((item) => item.type === "product-profile")?.data as any;
   const analysis = result.artifacts.find((item) => item.type === "product-analysis")?.data as any[];
+  const scorecard = result.artifacts.find((item) => item.type === "scorecard")?.data as any[];
   const selection = result.artifacts.find((item) => item.type === "selection")?.data as any;
   const content = result.artifacts.find((item) => item.type === "content-package")?.data as any;
   const creative = result.artifacts.find((item) => item.type === "creative-strategy")?.data as any;
   const finalPackage = result.artifacts.find((item) => item.type === "final-package")?.data as any;
-
-  assert.equal(productProfile.products[0].name, anchi.name);
-  assert.equal(productProfile.products[0].url, anchi.url);
   assert.equal(analysis[0].product.name, anchi.name);
   assert.equal(analysis[0].product.url, anchi.url);
+  assert.equal(scorecard[0].productId, anchi.id);
   assert.equal(selection.product.name, anchi.name);
   assert.equal(selection.product.url, anchi.url);
   assert.equal(content.title, anchi.name);
