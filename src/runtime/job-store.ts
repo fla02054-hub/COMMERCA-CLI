@@ -65,13 +65,12 @@ export async function listJobs(): Promise<SavedJob[]> {
   return jobs;
 }
 
+function jobTimestamp(job: SavedJob): string {
+  const workflow = job.workflow as any;
+  return String(workflow?.state?.updatedAt ?? workflow?.state?.createdAt ?? "");
+}
+
 export async function latestJob(): Promise<SavedJob | undefined> {
   const jobs = await listJobs();
-  return jobs
-    .filter((job) => job.workflow?.state)
-    .sort((a, b) => {
-      const aTime = a.workflow.state.updatedAt || a.workflow.state.createdAt || "";
-      const bTime = b.workflow.state.updatedAt || b.workflow.state.createdAt || "";
-      return bTime.localeCompare(aTime) || b.jobId.localeCompare(a.jobId);
-    })[0];
+  return jobs.sort((a, b) => jobTimestamp(b).localeCompare(jobTimestamp(a)) || b.jobId.localeCompare(a.jobId))[0];
 }
