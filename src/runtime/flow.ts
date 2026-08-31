@@ -9,22 +9,20 @@ export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: st
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
   "product-input": ["product-analysis"],
-  "product-analysis": ["content"],
-  content: ["creative"],
-  creative: ["production"],
+  "product-analysis": ["content-creative"],
+  "content-creative": ["production"],
   production: ["qc"],
-  qc: ["final-package", "creative", "production", "content"],
+  qc: ["final-package", "production", "content-creative"],
   "final-package": [],
 };
 
 const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]> = {
   "product-input": [],
   "product-analysis": ["product-input"],
-  content: ["product-analysis"],
-  creative: ["content", "product-analysis"],
-  production: ["creative", "content"],
-  qc: ["production", "creative", "content"],
-  "final-package": ["qc", "production", "creative", "content"],
+  "content-creative": ["product-analysis"],
+  production: ["content-creative", "product-analysis"],
+  qc: ["production", "content-creative", "product-analysis"],
+  "final-package": ["qc", "production", "content-creative"],
 };
 
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
@@ -42,18 +40,17 @@ function resetForRevision(workflow: RuntimeWorkflow, from: WorkflowStage): void 
 function inferRepairStage(failedStage: WorkflowStage, error: string): WorkflowStage | undefined {
   const text = error.toLowerCase();
   if (failedStage === "production") {
-    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content";
-    if (text.includes("creative strategy") || text.includes("storyboard")) return "creative";
-    return "creative";
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content package")) return "content-creative";
+    if (text.includes("creative strategy") || text.includes("storyboard")) return "content-creative";
+    return "content-creative";
   }
   if (failedStage === "qc") {
-    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url")) return "content";
-    if (text.includes("creative") || text.includes("storyboard")) return "creative";
+    if (text.includes("voice script") || text.includes("subtitle script") || text.includes("content") || text.includes("hashtag") || text.includes("url") || text.includes("creative") || text.includes("storyboard")) return "content-creative";
     if (text.includes("video") || text.includes("image") || text.includes("voice") || text.includes("subtitle")) return "production";
   }
   return undefined;
 }
-export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "content"): RuntimeWorkflow {
+export function reopenForAutonomousCycle(workflow: RuntimeWorkflow, startStage: WorkflowStage = "content-creative"): RuntimeWorkflow {
   if (workflow.state.status !== "completed" && workflow.state.status !== "failed") return workflow;
   resetForRevision(workflow, startStage); workflow.state.status = "running"; workflow.state.currentStage = startStage; workflow.state.approval = undefined;
   workflow.artifacts.push({ stage: startStage, type: "agent-reopened-cycle", data: { reason: "Autonomous agent is taking ownership of the next optimization cycle.", startStage }, createdAt: new Date().toISOString() });
@@ -78,7 +75,7 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
       const result = await registry.get(stage).execute(context); workflow.artifacts.push(...result.artifacts); state.artifactTypes.push(...result.artifacts.map((item) => item.type));
       const report = stage === "qc" ? qcReport(result.artifacts) : undefined;
       if (stage === "qc" && report?.passed === false && !result.nextStage) {
-        const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content";
+        const revisionStage = report.revisionStage && transitionAllowed("qc", report.revisionStage) ? report.revisionStage : "content-creative";
         if (autonomous && autonomousRevisions < maxAutonomousRevisions) { autonomousRevisions++; state.status = "completed"; state.completedAt = new Date().toISOString(); workflow.artifacts.push({ stage: "qc", type: "agent-decision", data: { action: "revise", revision: autonomousRevisions, nextStage: revisionStage, issues: [report] }, createdAt: new Date().toISOString() }); workflow.state.status = "running"; resetForRevision(workflow, revisionStage); stage = revisionStage; continue; }
         state.status = "failed"; state.error = "QC failed; revision is required before final package."; workflow.state.status = "failed"; return workflow;
       }
