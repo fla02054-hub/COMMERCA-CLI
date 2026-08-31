@@ -12,13 +12,9 @@ export {
 
 export {
   analyzeProduct,
+  rankProducts,
   type ProductAnalysis,
 } from "./analysis.js";
-
-export {
-  rankProducts,
-  selectBestProduct,
-} from "./selection.js";
 
 export {
   scoreProduct,
