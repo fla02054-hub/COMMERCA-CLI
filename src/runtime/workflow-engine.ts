@@ -1,50 +1,17 @@
 import { executeWorkflow, createRuntimeWorkflow, type ExecuteWorkflowOptions, type RuntimeWorkflow } from "./flow.js";
 import { createStageRegistry } from "./stage-registry.js";
+import { N8nLikeEngine, NodeRegistry, type WorkflowDefinition as DynamicWorkflowDefinition, type ExecutionResult as DynamicExecutionResult, type NodeHandler } from "./n8n-engine.js";
 import type { Product } from "../product/types.js";
 import type { WorkflowStage } from "./workflow-schema.js";
 
-/** COMMERCA's n8n-style workflow definition. Aiden is only an input channel. */
-export interface WorkflowNode { id: string; stage: WorkflowStage; next: string[]; retry?: number; provider?: string; }
-export interface WorkflowDefinition { id: "commerca-product-workflow"; start: "product-input"; nodes: Record<string, WorkflowNode>; }
-
-export const COMMERCA_WORKFLOW: WorkflowDefinition = {
-  id: "commerca-product-workflow",
-  start: "product-input",
-  nodes: {
-    "product-input": { id: "product-input", stage: "product-input", next: ["product-analysis"] },
-    "product-analysis": { id: "product-analysis", stage: "product-analysis", next: ["content-creative"] },
-    "content-creative": { id: "content-creative", stage: "content-creative", next: ["production"] },
-    production: { id: "production", stage: "production", next: ["qc"], provider: "adapter" },
-    qc: { id: "qc", stage: "qc", next: ["final-package", "production", "content-creative"] },
-    "final-package": { id: "final-package", stage: "final-package", next: [] },
-  },
-};
-
+export interface WorkflowNode<TContext = unknown> { id: string; next: string[]; execute?: (context: TContext) => Promise<unknown> | unknown; retry?: number; continueOnFail?: boolean; disabled?: boolean; provider?: string; stage?: WorkflowStage; }
+export interface WorkflowDefinition<TContext = unknown> { id: string; start: string; nodes: Record<string, WorkflowNode<TContext>>; }
+export interface GraphExecutionContext<T = unknown> { data: T; nodeId: string; outputs: Record<string, unknown>; history: string[]; }
+export interface GraphExecutionResult { outputs: Record<string, unknown>; history: string[]; failed?: { nodeId: string; error: string }; }
+export const COMMERCA_WORKFLOW: WorkflowDefinition = { id: "commerca-product-workflow", start: "product-input", nodes: { "product-input": { id: "product-input", stage: "product-input", next: ["ai-agent"] }, "ai-agent": { id: "ai-agent", stage: "content-creative", next: ["production"] }, production: { id: "production", stage: "production", next: ["qc"], provider: "adapter" }, qc: { id: "qc", stage: "qc", next: ["final-package", "production", "ai-agent"] }, "final-package": { id: "final-package", stage: "final-package", next: [] } } };
 export interface ProviderAdapter<T = unknown> { readonly id: string; execute(input: T): Promise<unknown>; }
-
-export class ProviderRegistry {
-  private readonly adapters = new Map<string, ProviderAdapter>();
-  register(adapter: ProviderAdapter): this {
-    if (this.adapters.has(adapter.id)) throw new Error(`Provider adapter already registered: ${adapter.id}`);
-    this.adapters.set(adapter.id, adapter); return this;
-  }
-  get(id: string): ProviderAdapter {
-    const adapter = this.adapters.get(id);
-    if (!adapter) throw new Error(`Provider adapter not registered: ${id}`);
-    return adapter;
-  }
-  has(id: string): boolean { return this.adapters.has(id); }
-}
-
-/** Single execution entrypoint for the COMMERCA workflow engine. */
-export class WorkflowEngine {
-  readonly definition = COMMERCA_WORKFLOW;
-  async run(goal: string, product: Product, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
-    const workflow = createRuntimeWorkflow(goal);
-    const registryOptions = { product, ...(options.outputDir !== undefined ? { outputDir: options.outputDir } : {}), ...(options.outputMp4 !== undefined ? { outputMp4: options.outputMp4 } : {}) };
-    const registry = createStageRegistry(registryOptions);
-    return executeWorkflow(workflow, registry, options);
-  }
-}
-
+export class ProviderRegistry { private readonly adapters = new Map<string, ProviderAdapter>(); register(adapter: ProviderAdapter): this { if (this.adapters.has(adapter.id)) throw new Error(`Provider adapter already registered: ${adapter.id}`); this.adapters.set(adapter.id, adapter); return this; } get(id: string): ProviderAdapter { const adapter = this.adapters.get(id); if (!adapter) throw new Error(`Provider adapter not registered: ${id}`); return adapter; } has(id: string): boolean { return this.adapters.has(id); } }
+export async function executeGraph<T>(definition: WorkflowDefinition<GraphExecutionContext<T>>, data: T, options: { maxIterations?: number } = {}): Promise<GraphExecutionResult> { const dynamic: DynamicWorkflowDefinition = { id: definition.id, version: 1, start: [definition.start], settings: { maxIterations: options.maxIterations }, nodes: Object.fromEntries(Object.entries(definition.nodes).map(([id, node]) => [id, { id, type: node.provider ? "tool" : "transform", next: node.next, retry: node.retry, continueOnFail: node.continueOnFail, disabled: node.disabled, execute: node.execute ? async (ctx: any) => node.execute!({ data: ctx.input as T, nodeId: id, outputs: ctx.outputs, history: [] }) : undefined }])) }; const result = await new N8nLikeEngine(new NodeRegistry()).execute(dynamic, data); return { outputs: result.outputs, history: result.records.map((r) => r.nodeId), failed: result.status === "error" ? { nodeId: result.records.at(-1)?.nodeId ?? definition.start, error: result.records.at(-1)?.error ?? "Workflow failed" } : undefined }; }
+export async function executeDynamicWorkflow(workflow: DynamicWorkflowDefinition, input: unknown, handlers: Partial<Record<DynamicWorkflowDefinition["nodes"][string]["type"], NodeHandler>> = {}): Promise<DynamicExecutionResult> { const registry = new NodeRegistry(); for (const [type, handler] of Object.entries(handlers)) if (handler) registry.register(type as any, handler); return new N8nLikeEngine(registry).execute(workflow, input); }
+export class WorkflowEngine { readonly definition = COMMERCA_WORKFLOW; async run(goal: string, product: Product, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> { const workflow = createRuntimeWorkflow(goal); const registryOptions = { product, ...(options.outputDir !== undefined ? { outputDir: options.outputDir } : {}), ...(options.outputMp4 !== undefined ? { outputMp4: options.outputMp4 } : {}) }; return executeWorkflow(workflow, createStageRegistry(registryOptions), options); } }
 export function createWorkflowEngine(): WorkflowEngine { return new WorkflowEngine(); }
