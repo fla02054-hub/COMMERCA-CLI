@@ -41,7 +41,8 @@ export class WorkflowEngine {
   readonly definition = COMMERCA_WORKFLOW;
   async run(goal: string, product: Product, options: ExecuteWorkflowOptions = {}): Promise<RuntimeWorkflow> {
     const workflow = createRuntimeWorkflow(goal);
-    const registry = createStageRegistry({ product, outputDir: options.outputDir, outputMp4: options.outputMp4 });
+    const registryOptions = { product, ...(options.outputDir !== undefined ? { outputDir: options.outputDir } : {}), ...(options.outputMp4 !== undefined ? { outputMp4: options.outputMp4 } : {}) };
+    const registry = createStageRegistry(registryOptions);
     return executeWorkflow(workflow, registry, options);
   }
 }
