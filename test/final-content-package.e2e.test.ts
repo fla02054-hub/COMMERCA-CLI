@@ -8,32 +8,23 @@ import type { StageContext } from "../src/runtime/stage-contract.ts";
 const outputDir = "/tmp/commerca-final-package";
 const packagePath = `${outputDir}/final-content-package.json`;
 
-test("Final Content Package is serialized as a post-ready bundle", async () => {
+test("Final Content Package is assembled separately from publishing", async () => {
   await rm(outputDir, { recursive: true, force: true });
   await mkdir(outputDir, { recursive: true });
-
-  const product = {
-    id: "test-product", name: "Test Product", url: "https://example.com/product", price: 499,
-    originalPrice: 799, discount: 300, commission: 60, rating: 4.8, reviewCount: 100, salesCount: 500,
-    seller: "Test Seller", promotion: "Test promotion", source: "test", discoveredAt: new Date().toISOString(),
-    image: "https://example.com/product.jpg", images: ["https://example.com/product.jpg"],
-  };
-  const content = { caption: "โปรเด็ดสำหรับคนกำลังมองหาของดี ราคาคุ้ม", hashtags: ["#โปรเด็ด", "#Shopee", "#ของดีบอกต่อ"], callToAction: "กดดูรายละเอียดและโปรโมชันได้เลย", productUrl: product.url };
-  const creative = { hook: "ราคานี้คุ้มมาก", scenes: [{ duration: 2, prompt: "product" }] };
+  const product = { id: "test-product", name: "Test Product", url: "https://example.com/product", price: 499, originalPrice: 799, discount: 300, commission: 60, rating: 4.8, reviewCount: 100, salesCount: 500, seller: "Test Seller", promotion: "Test promotion", source: "test", discoveredAt: new Date().toISOString(), image: "https://example.com/product.jpg", images: ["https://example.com/product.jpg"] };
+  const content = { title: "Test Product", hook: "ราคาคุ้ม", body: "รายละเอียด", caption: "โปรเด็ดสำหรับคนกำลังมองหาของดี ราคาคุ้ม", hashtags: ["#โปรเด็ด", "#Shopee", "#ของดีบอกต่อ"], callToAction: "กดดูรายละเอียดและโปรโมชันได้เลย", productUrl: product.url, firstComment: `🛒 พิกัดสินค้า 👇\n🔗 ${product.url}`, voiceScript: ["1","2","3","4","5"], subtitleScript: ["1","2","3","4","5"] };
+  const creative = { image: ["product"], video: ["product"], storyboard: ["product"], prompt: ["product"], voiceScript: content.voiceScript, subtitleScript: content.subtitleScript };
   const production = { image: { path: "/tmp/final.jpg" }, video: { path: "/tmp/final.mp4" }, voice: { path: "/tmp/voice.wav" }, subtitle: { path: "/tmp/subtitle.srt" } };
   const qc = { passed: true, issues: [] };
-
+  const publication = { organic: { status: "ready", productUrl: product.url, videoPath: "/tmp/final.mp4" }, ads: { status: "ready", productUrl: product.url, videoPath: "/tmp/final.mp4" } };
   const previous = process.env.COMMERCA_OUTPUT_DIR;
-  const previousPackage = process.env.COMMERCA_OUTPUT_PACKAGE;
   process.env.COMMERCA_OUTPUT_DIR = outputDir;
-  process.env.COMMERCA_OUTPUT_PACKAGE = packagePath;
   try {
     const registry = createStageRegistry({ production: async () => production as any });
-    const context: StageContext = {
-      workflowId: "final-package-e2e", goal: "test final content package", stage: "publishing",
-      artifacts: [artifact("product-input", "product-input", product), artifact("content-strategy", "content-package", content), artifact("creative-strategy", "creative-strategy", creative), artifact("production", "production-package", production), artifact("qc", "qc-report", qc)],
-    };
-    const result = await registry.get("publishing").execute(context);
+    const context: StageContext = { workflowId: "final-package-e2e", goal: "test final content package", stage: "final-package", artifacts: [
+      artifact("product-input", "product-input", product), artifact("product-analysis", "selection", { product }), artifact("content-strategy", "content-package", content), artifact("creative-strategy", "creative-strategy", creative), artifact("production", "production-package", production), artifact("qc", "qc-report", qc), artifact("publishing", "publication", publication),
+    ] };
+    const result = await registry.get("final-package").execute(context);
     const finalPackage = result.artifacts.find((item) => item.type === "final-package")?.data as any;
     assert.ok(finalPackage);
     assert.equal(finalPackage.product.name, product.name);
@@ -54,6 +45,5 @@ test("Final Content Package is serialized as a post-ready bundle", async () => {
     assert.ok(post.includes(product.url));
   } finally {
     if (previous === undefined) delete process.env.COMMERCA_OUTPUT_DIR; else process.env.COMMERCA_OUTPUT_DIR = previous;
-    if (previousPackage === undefined) delete process.env.COMMERCA_OUTPUT_PACKAGE; else process.env.COMMERCA_OUTPUT_PACKAGE = previousPackage;
   }
 });
