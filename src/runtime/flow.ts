@@ -8,18 +8,18 @@ export interface AgentNextDecision { action?: "continue" | "revise" | "stop" | "
 export interface ExecuteWorkflowOptions { pauseAfterQc?: boolean; outputDir?: string; outputMp4?: string; autonomous?: boolean; maxAutonomousRevisions?: number; decideNextStage?: (stage: WorkflowStage, workflow: RuntimeWorkflow) => Promise<AgentNextDecision>; }
 
 const ALLOWED_TRANSITIONS: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["product-scoring"],
-  "product-scoring": ["product-selection"], "product-selection": ["content-strategy"], "content-strategy": ["creative-strategy"],
-  "creative-strategy": ["production"], production: ["qc"], qc: ["publishing", "creative-strategy", "production", "content-strategy"],
-  publishing: ["performance"], performance: ["decision-learning"], "decision-learning": ["content-strategy"]
+  goal: ["product-input"], "product-input": ["product-analysis"], "product-analysis": ["content-strategy"],
+  "content-strategy": ["creative-strategy"], "creative-strategy": ["production"], production: ["qc"],
+  qc: ["publishing", "creative-strategy", "production", "content-strategy"], publishing: ["final-package"],
+  "final-package": ["performance"], performance: ["decision-learning"], "decision-learning": ["content-strategy"]
 };
 
 const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]> = {
-  goal: [], "product-input": [], "product-analysis": ["product-input"], "product-scoring": ["product-analysis"],
-  "product-selection": ["product-scoring", "product-analysis"], "content-strategy": ["product-selection", "product-scoring", "product-analysis"],
-  "creative-strategy": ["content-strategy", "product-selection", "product-scoring"], production: ["creative-strategy", "content-strategy", "product-selection"],
-  qc: ["production", "creative-strategy", "content-strategy"], publishing: ["qc", "production"], performance: ["publishing", "qc"],
-  "decision-learning": ["performance", "publishing", "production", "creative-strategy", "content-strategy"]
+  goal: [], "product-input": [], "product-analysis": ["product-input"], "content-strategy": ["product-analysis"],
+  "creative-strategy": ["content-strategy", "product-analysis"], production: ["creative-strategy", "content-strategy"],
+  qc: ["production", "creative-strategy", "content-strategy"], publishing: ["qc", "production"],
+  "final-package": ["publishing", "qc", "production"], performance: ["publishing", "final-package", "qc"],
+  "decision-learning": ["performance", "publishing", "final-package", "production", "creative-strategy", "content-strategy"]
 };
 
 export function createRuntimeWorkflow(goal: string, id = crypto.randomUUID()): RuntimeWorkflow {
@@ -78,12 +78,10 @@ export async function executeWorkflow(workflow: RuntimeWorkflow, registry: Workf
         state.status = "failed"; state.error = "QC failed; revision is required before publishing."; workflow.state.status = "failed"; return workflow;
       }
       state.status = "completed"; state.completedAt = new Date().toISOString(); delete state.error;
-      if (stage === "qc" && pauseAfterQc) { workflow.state.currentStage = "qc"; workflow.state.status = "awaiting-approval"; workflow.state.approval = { requestedAt: new Date().toISOString() }; workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the final package, then approve to continue publishing." }, createdAt: new Date().toISOString() }); return workflow; }
+      if (stage === "qc" && pauseAfterQc) { workflow.state.currentStage = "qc"; workflow.state.status = "awaiting-approval"; workflow.state.approval = { requestedAt: new Date().toISOString() }; workflow.artifacts.push({ stage: "qc", type: "approval-request", data: { status: "pending", message: "QC passed. Review the package inputs, then approve to continue publishing." }, createdAt: new Date().toISOString() }); return workflow; }
       let next = result.nextStage ?? WORKFLOW_STAGES[STAGE_ORDER[stage]];
       if (autonomous && options.decideNextStage) {
         const decision = await options.decideNextStage(stage, workflow);
-        // A stop is valid only at the terminal learning stage. A non-terminal
-        // stop decision must never mark the whole workflow completed.
         if (decision.action === "stop" && isTerminalStage(stage)) { workflow.state.currentStage = stage; workflow.state.status = "completed"; return workflow; }
         if (decision.action === "stop" && !isTerminalStage(stage)) {
           const forcedNext = WORKFLOW_STAGES[STAGE_ORDER[stage]];
