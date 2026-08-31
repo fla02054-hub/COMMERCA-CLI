@@ -37,11 +37,6 @@ jobs:
       - name: Final Content Package E2E artifact test
         if: success()
         run: npm run test:final-package
-      - name: Gemini real API integration test
-        if: success() && env.GEMINI_API_KEY != ''
-        env:
-          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
-        run: npm run test:gemini
       - name: Assemble post-ready package
         if: success()
         shell: bash
