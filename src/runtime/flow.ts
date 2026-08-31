@@ -21,7 +21,6 @@ const AUTONOMOUS_REVISION_STAGES: Record<WorkflowStage, readonly WorkflowStage[]
   "product-analysis": ["product-input"],
   "content-creative": ["product-analysis"],
   production: ["content-creative", "product-analysis"],
-  production: ["content-creative", "product-analysis"],
   qc: ["production", "content-creative", "product-analysis"],
   "final-package": ["qc", "production", "content-creative"],
 };
