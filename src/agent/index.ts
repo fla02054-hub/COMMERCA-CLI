@@ -11,6 +11,8 @@ const GEMINI_BASE = "https://generativelanguage.googleapis.com/v1beta/models";
 const DEFAULT_MODEL = "gemini-3.5-flash-lite";
 type GeminiPart = { text?: string; inline_data?: { mime_type: string; data: string } };
 
+type Intent = { mode: "chat" | "work"; reason: string };
+
 function loadLocalEnv() {
   const file = path.join(process.cwd(), ".env");
   if (!fs.existsSync(file)) return;
@@ -24,13 +26,13 @@ function loadLocalEnv() {
 loadLocalEnv();
 
 function extractJson(text: string) { return text.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)?.[1]?.trim() ?? text.trim(); }
-function historyText(context?: Record<string, unknown>) { const history = Array.isArray(context?.conversation) ? context.conversation : []; return history.slice(-12).map((m: any) => `${m.role === "assistant" ? "Aiden" : "คุณ"}: ${String(m.content ?? "")}`).join("\n"); }
+function historyText(context?: Record<string, unknown>) { const history = Array.isArray(context?.conversation) ? context.conversation : []; return history.slice(-16).map((m: any) => `${m.role === "assistant" ? "Aiden" : "คุณ"}: ${String(m.content ?? "")}`).join("\n"); }
 
 async function gemini(parts: GeminiPart[], context?: Record<string, unknown>, temperature = 0.35): Promise<string> {
   const apiKey = typeof context?.geminiApiKey === "string" ? context.geminiApiKey : process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY is required for the AI Agent.");
   const model = typeof context?.geminiModel === "string" ? context.geminiModel : process.env.GEMINI_MODEL || DEFAULT_MODEL;
-  const response = await fetch(`${GEMINI_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature, maxOutputTokens: 1200 } }) });
+  const response = await fetch(`${GEMINI_BASE}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(apiKey)}`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature, maxOutputTokens: 1400 } }) });
   if (!response.ok) throw new Error(`Gemini request failed (${response.status}): ${(await response.text()).slice(0, 500)}`);
   const payload = await response.json() as any;
   const text = payload.candidates?.[0]?.content?.parts?.map((p: any) => p.text ?? "").join("").trim();
@@ -52,6 +54,20 @@ async function imageParts(context?: Record<string, unknown>): Promise<GeminiPart
   return result;
 }
 
+async function classifyIntent(task: AgentTask): Promise<Intent> {
+  const value = JSON.parse(extractJson(await gemini([{ text: [
+    "คุณคือ Aiden ผู้ช่วยส่วนตัวของเจ้าของ COMMERCA.",
+    "จำแนกเจตนาของข้อความล่าสุดจากบริบทสนทนา.",
+    "chat = การพูดคุย/ถามความคิดเห็น/คุยต่อ โดยยังไม่ได้สั่งให้ระบบลงมือทำ.",
+    "work = ผู้ใช้สั่งให้ค้นหา เลือก วิเคราะห์ สร้าง ทำงาน ผลิต ตรวจ หรือจัดการบางอย่าง.",
+    "ถ้าผู้ใช้ใช้คำสั่งทำงานโดยนัย เช่น 'เอาตัวที่ดีที่สุดมาแล้วทำเลย' ให้เป็น work.",
+    "คืน JSON เท่านั้น: {mode:'chat'|'work',reason:string}.",
+    `บริบท:\n${historyText(task.context)}`,
+    `ข้อความล่าสุด: ${task.goal}`
+  ].join("\n") }], task.context, 0))) as Partial<Intent>;
+  return value.mode === "work" ? { mode: "work", reason: String(value.reason || "ผู้ใช้สั่งให้ลงมือทำ") } : { mode: "chat", reason: String(value.reason || "เป็นการสนทนา") };
+}
+
 async function understandProduct(goal: string, context?: Record<string, unknown>): Promise<Product | undefined> {
   const supplied = context?.product;
   if (supplied && typeof supplied === "object") {
@@ -60,9 +76,10 @@ async function understandProduct(goal: string, context?: Record<string, unknown>
   }
   const parts: GeminiPart[] = [{ text: [
     "คุณคือ Aiden ผู้ช่วย AI ของเจ้าของ COMMERCA.",
-    "อ่านคำขอ บริบท และรูปภาพสินค้า แล้วดึงข้อมูลสินค้าที่มองเห็นหรือระบุไว้.",
-    "ห้ามแต่งข้อมูล. ช่องที่ไม่พบให้เป็น null.",
-    "คืน JSON เท่านั้น: {name,price,originalPrice,url,image,confidence}.",
+    "อ่านข้อความ บริบท และรูปภาพ แล้วดึงเฉพาะข้อมูลสินค้าที่มีหลักฐานอยู่จริง.",
+    "ห้ามแต่งชื่อสินค้า ราคา ราคาปกติ หรือลิงก์ขึ้นมาเอง.",
+    "ถ้าไม่พบข้อมูลให้เป็น null.",
+    "คืน JSON เท่านั้น: {name,price,originalPrice,url,image}.",
     `บริบทการสนทนา:\n${historyText(context)}`,
     `คำขอล่าสุด: ${goal}`
   ].join("\n") }, ...(await imageParts(context))];
@@ -78,20 +95,33 @@ export class AIAgent {
   async chat(task: AgentTask): Promise<string> {
     return gemini([{ text: [
       "คุณคือ Aiden ผู้ช่วยส่วนตัวของเจ้าของ COMMERCA.",
-      "คุยภาษาไทยอย่างเป็นธรรมชาติ เข้าใจบริบทและคำสั่งต่อเนื่อง.",
-      "อย่าตอบเหมือนฟอร์ม และอย่าเริ่มด้วยกฎหรือบังคับให้ผู้ใช้กรอกข้อมูล.",
-      "ถ้าผู้ใช้กำลังคุย ให้คุย. ถ้าต้องการทำงาน ให้ช่วยวางแผนและจัดการต่อ.",
-      "ถ้าข้อมูลไม่พอ ให้ถามเฉพาะสิ่งที่จำเป็นจริง ๆ และก่อนถามให้ใช้ข้อมูลจากบริบท/รูปภาพให้เต็มที่.",
+      "คุยภาษาไทยอย่างเป็นธรรมชาติ เหมือนผู้ช่วยที่ทำงานร่วมกับเจ้าของจริง.",
+      "จำและใช้บริบทการสนทนา หลีกเลี่ยงการพูดซ้ำหรือถามสิ่งที่ผู้ใช้เพิ่งบอกไปแล้ว.",
+      "อย่าตอบเป็นฟอร์ม อย่าอ้างว่าค้นหรือทำสิ่งใดแล้วถ้ายังไม่ได้ทำจริง.",
+      "เมื่อผู้ใช้กำลังคุย ให้ตอบให้รู้เรื่องและต่อบทสนทนาอย่างเป็นธรรมชาติ.",
+      "เมื่อผู้ใช้สั่งงาน ให้บอกสั้น ๆ ว่าจะจัดการ แล้วปล่อยให้ execution path ทำงาน.",
       `บริบทการสนทนา:\n${historyText(task.context)}`,
       `ข้อความล่าสุด: ${task.goal}`
-    ].join("\n") }], task.context, 0.45);
+    ].join("\n") }], task.context, 0.5);
   }
 
   async run(task: AgentTask): Promise<AgentResult> {
     if (!task.goal.trim() && !(Array.isArray(task.context?.images) && task.context?.images.length)) return { status: "needs_input", goal: task.goal, report: "ได้ครับ บอกผมได้เลยว่าต้องการให้ทำอะไร" };
     try {
+      const intent = await classifyIntent(task);
+      if (intent.mode === "chat") return { status: "completed", goal: task.goal, report: await this.chat(task) };
+
       const product = await understandProduct(task.goal, task.context);
-      if (!product) return { status: "needs_input", goal: task.goal, report: await this.chat(task) };
+      if (!product) {
+        return { status: "needs_input", goal: task.goal, report: await gemini([{ text: [
+          "คุณคือ Aiden. ผู้ใช้สั่งให้ลงมือทำ แต่ข้อมูลที่มีหลักฐานยังไม่พอเริ่ม workflow สินค้า.",
+          "ห้ามสร้างสินค้า ราคา หรือลิงก์ปลอม และห้ามอ้างว่าดูเทรนด์หรือตลาดแล้วถ้าไม่มีเครื่องมือค้นจริง.",
+          "คุยกับผู้ใช้แบบธรรมชาติ บอกว่าคุณต้องการข้อมูล/สิทธิ์เข้าถึงอะไรเพียงเท่าที่จำเป็น และอย่าถามเพื่อขออนุมัติขั้นตอนที่ไม่จำเป็น.",
+          `บริบท:\n${historyText(task.context)}`,
+          `คำขอ: ${task.goal}`
+        ].join("\n") }], task.context, 0.45) };
+      }
+
       const jobId = `JOB-${new Date().toISOString().replace(/\D/g, "").slice(0, 14)}-${crypto.randomUUID().slice(0, 6).toUpperCase()}`;
       const outputDir = typeof task.context?.outputDir === "string" ? task.context.outputDir : path.join(process.env.COMMERCA_OUTPUT_ROOT ?? "./output", jobId);
       const outputMp4 = typeof task.context?.outputMp4 === "string" ? task.context.outputMp4 : path.join(outputDir, "final.mp4");
