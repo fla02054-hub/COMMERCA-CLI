@@ -2,8 +2,7 @@
 export const WORKFLOW_STAGES = [
   "product-input",
   "product-analysis",
-  "content",
-  "creative",
+  "content-creative",
   "production",
   "qc",
   "final-package",
@@ -26,7 +25,7 @@ export interface WorkflowStageState {
   artifactTypes: string[];
 }
 export interface WorkflowBlueprint {
-  version: 8;
+  version: 9;
   status: WorkflowStatus;
   stages: WorkflowStageState[];
   currentStage: WorkflowStage;
@@ -41,7 +40,7 @@ export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(
 
 export function createWorkflowBlueprint(maxAttemptsPerStage = 2): WorkflowBlueprint {
   return {
-    version: 8,
+    version: 9,
     status: "running",
     currentStage: "product-input",
     transitionHistory: [],
