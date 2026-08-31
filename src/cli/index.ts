@@ -9,15 +9,19 @@ function valueAfter(flag:string):string|undefined{const i=args.indexOf(flag);con
 function valuesAfter(flag:string):string[]{const i=args.indexOf(flag);if(i<0)return[];const out:string[]=[];for(const v of args.slice(i+1)){if(v.startsWith("--"))break;out.push(v);}return out;}
 function price(v:string|undefined,label:string):number|undefined{if(v===undefined)return;const n=Number(v.replace(/,/g,""));if(!Number.isFinite(n)||n<0)throw new Error(`${label} must be a valid non-negative number.`);return n;}
 function outputPaths(jobId:string){const dir=join(process.env.COMMERCA_OUTPUT_ROOT??"./output",jobId);return{outputDir:dir,outputMp4:join(dir,"final.mp4")};}
+function getProduct(workflow:any):Product|undefined{return workflow.artifacts.find((x:any)=>x.type==="product-input")?.data as Product|undefined;}
 async function runAgentJob(jobId:string,reopenTerminal=false):Promise<boolean>{
-  const saved=await loadJob(jobId);
-  if(saved.workflow.state.status==="completed"&&!reopenTerminal)return false;
-  if(saved.workflow.state.status==="failed"||reopenTerminal){
-    console.log(`[AGENT] taking ownership of ${jobId} (status=${saved.workflow.state.status})`);
+  const saved=await loadJob(jobId); const status=saved.workflow.state.status; const product=getProduct(saved.workflow);
+  if(status==="completed"&&!reopenTerminal)return false;
+  if(status==="awaiting-approval"&&!reopenTerminal)return false;
+  if(!product){
+    if(!reopenTerminal) return false;
+    throw new Error(`Job ${jobId} has no product input.`);
+  }
+  if(status==="failed"||reopenTerminal){
+    console.log(`[AGENT] taking ownership of ${jobId} (status=${status})`);
     reopenForAutonomousCycle(saved.workflow,saved.workflow.state.currentStage);
   }
-  const product=saved.workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;
-  if(!product)throw new Error(`Job ${jobId} has no product input.`);
   const result=await resumeAutonomousAgent(saved.workflow,product,{...outputPaths(jobId),maxCycles:20,maxAutonomousRevisions:5,onProgress:message=>console.log(message)});
   await saveJob(jobId,result.workflow);
   console.log(JSON.stringify({jobId,agent:"autonomous",mode:"active",decisions:result.decisions,status:result.workflow.state.status,currentStage:result.workflow.state.currentStage},null,2));
@@ -34,7 +38,7 @@ if(args[0]==="workflow"&&args[1]==="agent"){
   throw new Error("usage: workflow agent --job-id <job-id> | workflow agent --watch");
 }
 if(args[0]==="workflow"&&args[1]==="approve"){
-  const jobId=valueAfter("--job-id");if(!jobId)throw new Error("usage: workflow approve --job-id <job-id>");const saved=await loadJob(jobId);const product=saved.workflow.artifacts.find(x=>x.type==="product-input")?.data as Product|undefined;if(!product)throw new Error(`Job ${jobId} has no product input.`);const workflow=await continueWorkflow(saved.workflow,product,{...outputPaths(jobId)});await saveJob(jobId,workflow);console.log(JSON.stringify({jobId,...workflow},null,2));if(workflow.state.status==="failed")process.exit(1);process.exit(0);
+  const jobId=valueAfter("--job-id");if(!jobId)throw new Error("usage: workflow approve --job-id <job-id>");const saved=await loadJob(jobId);const product=getProduct(saved.workflow);if(!product)throw new Error(`Job ${jobId} has no product input.`);const workflow=await continueWorkflow(saved.workflow,product,{...outputPaths(jobId)});await saveJob(jobId,workflow);console.log(JSON.stringify({jobId,...workflow},null,2));if(workflow.state.status==="failed")process.exit(1);process.exit(0);
 }
 if(args[0]==="workflow"&&args[1]==="run"&&args.includes("--product")){
   const name=valueAfter("--product"),special=price(valueAfter("--price"),"Special price"),original=price(valueAfter("--original-price"),"Original price"),url=valueAfter("--url"),image=valueAfter("--image"),extra=valuesAfter("--images");
