@@ -7,6 +7,7 @@ const api = "https://discord.com/api/v10";
 const reconnectDelayMs = 3000;
 const discordMaxRetries = 4;
 let queue: Promise<void> = Promise.resolve();
+let sendQueue: Promise<void> = Promise.resolve();
 
 if (!token) throw new Error("DISCORD_AGENT_TOKEN is required.");
 
@@ -22,8 +23,9 @@ async function discord(path: string, init: RequestInit = {}) {
 
     let retryAfterMs = 1000;
     try {
-      const parsed = JSON.parse(body) as { retry_after?: number };
+      const parsed = JSON.parse(body) as { retry_after?: number; global?: boolean };
       if (typeof parsed.retry_after === "number") retryAfterMs = Math.max(250, Math.ceil(parsed.retry_after * 1000));
+      if (parsed.global) retryAfterMs = Math.max(retryAfterMs, 1000);
     } catch {
       // Keep the conservative fallback delay when Discord returns a non-JSON body.
     }
@@ -34,8 +36,18 @@ async function discord(path: string, init: RequestInit = {}) {
   throw new Error("Discord request failed after retries.");
 }
 
-async function send(channelId: string, content: string) {
-  await discord(`/channels/${channelId}/messages`, { method: "POST", body: JSON.stringify({ content: content.slice(0, 1900) }) });
+function send(channelId: string, content: string): Promise<void> {
+  const task = sendQueue.then(async () => {
+    try {
+      await discord(`/channels/${channelId}/messages`, { method: "POST", body: JSON.stringify({ content: content.slice(0, 1900) }) });
+    } catch (error) {
+      // Discord transport failures must not abort the agent or workflow. Log them
+      // locally; the next queued message gets its own delivery attempt.
+      console.error(`[Aiden] Discord send failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  });
+  sendQueue = task.catch(() => undefined);
+  return task;
 }
 
 function extractImageUrls(text: string): string[] {
