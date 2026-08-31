@@ -7,8 +7,9 @@ import { FunctionStage, WorkflowStageRegistry } from "../src/runtime/stages.js";
 import { WORKFLOW_STAGES } from "../src/runtime/workflow-schema.js";
 import type { Product } from "../src/product/types.js";
 
-// Approval-gate tests must be deterministic and must not require a live AI provider.
+// Approval-gate tests must be deterministic and must not require a live AI/provider or filesystem-backed production output.
 process.env.COMMERCA_USE_MOCK_CONTENT = "1";
+process.env.COMMERCA_MODE = "test";
 
 const product: Product = { id: "approval-product", name: "Approval Gate Product", image: "fixture://image", url: "https://example.invalid/product", price: 100, originalPrice: 200, discount: 50, source: "test", discoveredAt: new Date().toISOString() };
 
