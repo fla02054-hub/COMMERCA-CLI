@@ -5,14 +5,33 @@ const token = process.env.DISCORD_AGENT_TOKEN?.trim();
 const channelAllowlist = new Set((process.env.DISCORD_AGENT_CHANNELS ?? "").split(",").map((x) => x.trim()).filter(Boolean));
 const api = "https://discord.com/api/v10";
 const reconnectDelayMs = 3000;
+const discordMaxRetries = 4;
 let queue: Promise<void> = Promise.resolve();
 
 if (!token) throw new Error("DISCORD_AGENT_TOKEN is required.");
 
 async function discord(path: string, init: RequestInit = {}) {
-  const response = await fetch(`${api}${path}`, { ...init, headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json", ...(init.headers ?? {}) } });
-  if (!response.ok) throw new Error(`Discord API ${response.status}: ${(await response.text()).slice(0, 500)}`);
-  return response.status === 204 ? null : response.json();
+  for (let attempt = 0; attempt <= discordMaxRetries; attempt += 1) {
+    const response = await fetch(`${api}${path}`, { ...init, headers: { Authorization: `Bot ${token}`, "Content-Type": "application/json", ...(init.headers ?? {}) } });
+    if (response.ok) return response.status === 204 ? null : response.json();
+
+    const body = await response.text();
+    if (response.status !== 429 || attempt === discordMaxRetries) {
+      throw new Error(`Discord API ${response.status}: ${body.slice(0, 500)}`);
+    }
+
+    let retryAfterMs = 1000;
+    try {
+      const parsed = JSON.parse(body) as { retry_after?: number };
+      if (typeof parsed.retry_after === "number") retryAfterMs = Math.max(250, Math.ceil(parsed.retry_after * 1000));
+    } catch {
+      // Keep the conservative fallback delay when Discord returns a non-JSON body.
+    }
+    retryAfterMs += 100;
+    console.log(`[Aiden] Discord rate limited; retrying in ${retryAfterMs}ms (attempt ${attempt + 1}/${discordMaxRetries})`);
+    await new Promise((resolve) => setTimeout(resolve, retryAfterMs));
+  }
+  throw new Error("Discord request failed after retries.");
 }
 
 async function send(channelId: string, content: string) {
@@ -64,9 +83,6 @@ async function runMessage(channelId: string, message: any) {
     onProgress: (progress: string) => { void send(channelId, `Aiden: ${progress}`); }
   };
 
-  // Every normal message goes to Aiden. Aiden itself decides whether it is chat,
-  // a new job, or an existing-job operation. The gateway does not require a
-  // rigid command vocabulary, so the owner can send text, images, URLs, or a mix.
   console.log(`[Aiden] Discord message received | input=autonomous | text=${JSON.stringify(text.slice(0, 160))}`);
   await send(channelId, "รับเรื่องครับ ผมจะวิเคราะห์ข้อมูลและจัดการให้เอง");
   console.log("[Aiden] Starting agent.run()");
