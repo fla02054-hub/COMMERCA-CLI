@@ -2,67 +2,53 @@
 
 ## Purpose
 
-Define the complete automation flow before implementing downstream stages. Each stage has a stable boundary: input -> process -> output artifacts -> QC/decision -> next stage.
+Define the direct-product automation flow with one clear responsibility per stage. Each stage has a stable boundary: input -> process -> output artifacts -> gate -> next stage.
 
 ## End-to-end flow
 
-`Goal -> Product Discovery -> Product Research -> Market Research -> Product Analysis -> Product Scoring -> Product Selection -> Content Strategy -> Creative Strategy -> Production -> QC -> Publishing -> Performance -> Decision/Learning -> feedback to Research`
+`Goal -> Product Input -> Product Analysis (analyze + score + select) -> Content Strategy -> Creative Strategy -> Production -> QC -> Publishing -> Final Package -> Performance -> Decision/Learning`
+
+The current CLI accepts a selected/manual product directly. Product discovery and research are outside this direct-product workflow.
 
 ## Stage contracts
 
 | # | Stage | Primary input | Primary output | Gate |
 |---|---|---|---|---|
-| 1 | Goal | user objective | normalized goal | valid goal |
-| 2 | Product Discovery | goal | product candidates | candidates found |
-| 3 | Product Research | candidates | enriched product data | required fields/evidence |
-| 4 | Market Research | products + goal | market/competitor evidence | evidence sufficient |
-| 5 | Product Analysis | product + market evidence | analysis + reasons | analysis complete |
-| 6 | Product Scoring | analysis | scored candidates | score calculated |
-| 7 | Product Selection | scored candidates | selected product(s) | selection criteria met |
-| 8 | Content Strategy | selected product + evidence | angles, hooks, copy brief, CTA | strategy complete |
-| 9 | Creative Strategy | content strategy | creative concepts, storyboard, prompts | concept approved |
-| 10 | Production | creative package | media assets/package | assets produced |
-| 11 | QC | product + content + creative + assets | QC result | pass or revision |
-| 12 | Publishing | QC-passed package | published records | publish success |
-| 13 | Performance | published records + metrics | performance report | data available |
-| 14 | Decision/Learning | performance + prior evidence | winner/loser + next actions | decision recorded |
+| 1 | Goal | user objective | `goal` | valid goal |
+| 2 | Product Input | product supplied by user/provider | `product-input` | name, price, URL, image |
+| 3 | Product Analysis | product | `product-analysis`, `scorecard`, `selection` | evaluation complete |
+| 4 | Content Strategy | selected product + evaluation | `content-package` | content/product URL aligned |
+| 5 | Creative Strategy | content package | `creative-strategy` | creative validation |
+| 6 | Production | creative strategy | `production-package` | media generated |
+| 7 | QC | product + content + creative + production | `qc-report` | pass or revision |
+| 8 | Publishing | QC-passed production package | `publication` | publish/ready record |
+| 9 | Final Package | all approved artifacts + publication | `final-package`, `post.txt` | serializable post-ready bundle |
+| 10 | Performance | publication + metrics | `performance-report` | metrics available |
+| 11 | Decision/Learning | performance + publication | `decision` | decision recorded |
 
-## Required runtime behavior
+## Responsibility boundaries
 
-- Preserve one workflow context across every stage.
-- Every stage records status, attempt count, timestamps, errors, and artifact types.
-- A failed stage must stop downstream execution unless an explicit retry/revision policy permits continuation.
-- QC can route back to the producing stage for revision.
-- Decision/Learning can route back to Product Research or Content Strategy for iteration.
-- Providers are adapters behind interfaces; workflow stages must not depend on a single vendor.
-- Secrets/API keys never belong in workflow artifacts.
-
-## Artifact families
-
-- Goal: `goal`
-- Discovery: `product-candidate-list`
-- Research: `product-profile`, `price-history`, `commission-data`, `market-evidence`, `competitor-evidence`
-- Analysis: `product-analysis`, `scorecard`, `selection`
-- Content: `content-strategy`, `content-package`
-- Creative: `creative-brief`, `storyboard`, `creative-prompt`
-- Production: `image`, `video`, `audio`, `subtitle`, `production-package`
-- QC: `qc-report`
-- Publishing: `publication`
-- Performance: `performance-report`
-- Learning: `decision`, `learning-record`
+- **Product Analysis owns analysis, scoring and selection together.** The workflow does not run ranking/scoring again in Content Strategy.
+- **Creative Strategy owns specifications** (concepts, storyboard, prompts). **Production owns actual media generation.**
+- **Publishing owns the external publication action only.** It does not assemble or serialize the final package.
+- **Final Package owns assembly and file serialization only.** It never publishes.
+- **QC is the gate before publishing and revision routing.**
+- **Performance reports metrics; Decision/Learning decides what to optimize.**
 
 ## Revision loops
 
 `Production -> QC -> Production`
 
-`Content Strategy -> Creative Strategy -> QC -> Content Strategy`
+`Creative Strategy -> QC -> Creative Strategy`
 
-`Performance -> Decision/Learning -> Product Research / Content Strategy`
+`Content Strategy -> QC -> Content Strategy`
 
-## Implementation order
+`Performance -> Decision/Learning -> Content Strategy`
 
-1. Keep this blueprint and contracts stable.
-2. Refactor runtime around the stage list and context/state model.
-3. Add stage interfaces/adapters.
-4. Implement stages one by one.
-5. Add integration tests for the complete path and revision loops.
+## Runtime behavior
+
+- Preserve one workflow context across every stage.
+- Every stage records status, attempt count, timestamps, errors, and artifact types.
+- Failed stages stop downstream execution unless retry/revision policy permits continuation.
+- Providers remain adapters behind stage boundaries.
+- Secrets/API keys never belong in workflow artifacts.
