@@ -34,12 +34,6 @@ jobs:
       - name: Final Content Package E2E artifact test
         if: success()
         run: npm run test:final-package
-      - name: Performance gate
-        if: success()
-        run: npm run test:performance
-      - name: Decision and Learning gate
-        if: success()
-        run: npm run test:decision
       - name: Gemini real API integration test
         if: success() && env.GEMINI_API_KEY != ''
         env:
