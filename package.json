@@ -13,7 +13,7 @@
     "test:qc": "node --import tsx --test test/qc.final-mp4.e2e.test.ts",
     "test:publishing": "node --import tsx --test test/publishing.test.ts",
     "test:final-package": "node --import tsx --test test/final-content-package.e2e.test.ts",
-    "test:gemini": "node --import tsx --test test/autonomous-agent.test.ts",
+    "test:groq": "node --import tsx --test test/autonomous-agent.test.ts",
     "package:publish": "tsx src/cli/index.ts package publish",
     "workflow:e2e": "node --import tsx --test test/workflow.e2e.test.ts"
   },
