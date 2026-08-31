@@ -3,13 +3,13 @@ export { WORKFLOW_STAGES, STAGE_ORDER, createWorkflowBlueprint } from "./workflo
 export type { StageContext, StageResult, WorkflowStageHandler } from "./stage-contract.js";
 export { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 export { createStageRegistry } from "./stage-registry.js";
-export { createRuntimeWorkflow, executeWorkflow, reopenForAutonomousCycle } from "./flow.js";
+export { createRuntimeWorkflow, executeWorkflow, reopenForAutonomousCycle, getWorkflowRegistry } from "./flow.js";
 export type { RuntimeWorkflow, ExecuteWorkflowOptions } from "./flow.js";
 export { runAutonomousAgent, resumeAutonomousAgent } from "./autonomous-agent.js";
 export type { AutonomousAgentOptions, AutonomousAgentResult } from "./autonomous-agent.js";
 
 import { STAGE_ORDER } from "./workflow-schema.js";
-import { createRuntimeWorkflow, executeWorkflow, type RuntimeWorkflow, type ExecuteWorkflowOptions } from "./flow.js";
+import { createRuntimeWorkflow, executeWorkflow, getWorkflowRegistry, type RuntimeWorkflow, type ExecuteWorkflowOptions } from "./flow.js";
 import { createStageRegistry } from "./stage-registry.js";
 import type { Product } from "../product/types.js";
 
@@ -27,6 +27,6 @@ export async function continueWorkflow(workflow: RuntimeWorkflow, product: Produ
   workflow.state.status = "running";
   // QC is already completed. Resume directly at final-package; never rerun QC.
   workflow.state.currentStage = "final-package";
-  const registry = createStageRegistry({ product, outputDir: options?.outputDir, outputMp4: options?.outputMp4 });
+  const registry = getWorkflowRegistry(workflow) ?? createStageRegistry({ product, outputDir: options?.outputDir, outputMp4: options?.outputMp4 });
   return executeWorkflow(workflow, registry, options);
 }
