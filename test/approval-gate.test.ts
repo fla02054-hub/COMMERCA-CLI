@@ -16,7 +16,7 @@ test("QC passes then workflow pauses for explicit approval", async () => {
   assert.equal(result.state.status, "awaiting-approval");
   assert.equal(result.state.currentStage, "qc");
   assert.equal(result.state.stages.find(s => s.stage === "qc")?.status, "completed");
-  assert.equal(result.state.stages.find(s => s.stage === "publishing")?.status, "pending");
+  assert.equal(result.state.stages.find(s => s.stage === "final-package")?.status, "pending");
   assert.ok(result.artifacts.some(a => a.type === "approval-request"));
 });
 
@@ -27,7 +27,7 @@ test("approved workflow continues from QC without rerunning QC", async () => {
   const beforeQcAttempts = workflow.state.stages.find(s => s.stage === "qc")?.attempts;
   const continued = await continueWorkflow(workflow, product);
   assert.equal(continued.state.status, "completed");
-  assert.equal(continued.state.currentStage, "decision-learning");
+  assert.equal(continued.state.currentStage, "final-package");
   assert.equal(continued.state.stages.find(s => s.stage === "qc")?.attempts, beforeQcAttempts);
   assert.ok(continued.state.approval?.approvedAt);
 });
