@@ -5,18 +5,19 @@ export { WorkflowStageRegistry, FunctionStage, artifact } from "./stages.js";
 export { createStageRegistry } from "./stage-registry.js";
 export { createRuntimeWorkflow, executeWorkflow, reopenForAutonomousCycle, getWorkflowRegistry } from "./flow.js";
 export type { RuntimeWorkflow, ExecuteWorkflowOptions } from "./flow.js";
+export { WorkflowEngine, ProviderRegistry, COMMERCA_WORKFLOW, createWorkflowEngine } from "./workflow-engine.js";
+export type { WorkflowNode, WorkflowDefinition, ProviderAdapter } from "./workflow-engine.js";
 export { runAutonomousAgent, resumeAutonomousAgent } from "./autonomous-agent.js";
 export type { AutonomousAgentOptions, AutonomousAgentResult } from "./autonomous-agent.js";
 
 import { STAGE_ORDER } from "./workflow-schema.js";
 import { createRuntimeWorkflow, executeWorkflow, getWorkflowRegistry, type RuntimeWorkflow, type ExecuteWorkflowOptions } from "./flow.js";
 import { createStageRegistry } from "./stage-registry.js";
+import { createWorkflowEngine } from "./workflow-engine.js";
 import type { Product } from "../product/types.js";
 
 export async function runWorkflowWithProduct(goal: string, product: Product, options?: ExecuteWorkflowOptions): Promise<RuntimeWorkflow> {
-  const workflow = createRuntimeWorkflow(goal);
-  const registry = createStageRegistry({ product, outputDir: options?.outputDir, outputMp4: options?.outputMp4 });
-  return executeWorkflow(workflow, registry, options);
+  return createWorkflowEngine().run(goal, product, options);
 }
 
 export async function continueWorkflow(workflow: RuntimeWorkflow, product: Product, options?: ExecuteWorkflowOptions): Promise<RuntimeWorkflow> {
@@ -25,7 +26,6 @@ export async function continueWorkflow(workflow: RuntimeWorkflow, product: Produ
   if (!qcState || qcState.status !== "completed") throw new Error("Cannot approve workflow before QC is completed.");
   workflow.state.approval = { ...(workflow.state.approval ?? { requestedAt: new Date().toISOString() }), approvedAt: new Date().toISOString() };
   workflow.state.status = "running";
-  // QC is already completed. Resume directly at final-package; never rerun QC.
   workflow.state.currentStage = "final-package";
   const registry = getWorkflowRegistry(workflow) ?? createStageRegistry({ product, outputDir: options?.outputDir, outputMp4: options?.outputMp4 });
   return executeWorkflow(workflow, registry, options);
