@@ -1,7 +1,12 @@
 /** Direct-product COMMERCA workflow. Stage-specific artifact models live in stage-artifacts.ts. */
 export const WORKFLOW_STAGES = [
-  "goal", "product-input", "product-analysis",
-  "content-strategy", "creative-strategy", "production", "qc", "publishing", "final-package", "performance", "decision-learning",
+  "product-input",
+  "product-analysis",
+  "content",
+  "creative",
+  "production",
+  "qc",
+  "final-package",
 ] as const;
 
 export type WorkflowStage = (typeof WORKFLOW_STAGES)[number];
@@ -9,7 +14,6 @@ export type StageStatus = "pending" | "running" | "completed" | "failed" | "skip
 export type WorkflowStatus = "running" | "awaiting-approval" | "completed" | "failed";
 export type DecisionKind = "winner" | "loser" | "optimize";
 
-export interface GoalInput { text: string; }
 export interface ProductInput { name: string; price: number; url: string; image: string; }
 export interface WorkflowArtifact<T = unknown> { stage: WorkflowStage; type: string; data: T; createdAt: string; }
 export interface WorkflowStageState {
@@ -22,7 +26,7 @@ export interface WorkflowStageState {
   artifactTypes: string[];
 }
 export interface WorkflowBlueprint {
-  version: 7;
+  version: 8;
   status: WorkflowStatus;
   stages: WorkflowStageState[];
   currentStage: WorkflowStage;
@@ -37,9 +41,9 @@ export const STAGE_ORDER: Record<WorkflowStage, number> = Object.fromEntries(
 
 export function createWorkflowBlueprint(maxAttemptsPerStage = 2): WorkflowBlueprint {
   return {
-    version: 7,
+    version: 8,
     status: "running",
-    currentStage: "goal",
+    currentStage: "product-input",
     transitionHistory: [],
     maxAttemptsPerStage,
     stages: WORKFLOW_STAGES.map((stage) => ({
