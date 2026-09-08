@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { accountService, listAccounts, loginAccount } from "../accounts/account-manager.js";
+import { listAccounts, loginAccount, accountService } from "../accounts/account-manager.js";
 import type { Product } from "./types.js";
 
 const MODEL = process.env.GEMINI_PRODUCT_MODEL || "gemini-3.1-flash-lite-preview";
@@ -47,19 +47,19 @@ function chromePath(): string {
   return found;
 }
 
-async function visibleLoginIfNeeded(): Promise<void> {
+async function ensureShopeeConnected(): Promise<void> {
   const account = listAccounts().find((x) => x.service === "shopee");
   if (account?.status === "CONNECTED") return;
-  console.log("[PRODUCT] Shopee is not connected. Opening Chrome for manual login...");
+  console.log("[PRODUCT] Shopee is not connected. Use Account Center to connect Shopee first.");
   await loginAccount(accountService("shopee"));
 }
 
 async function openShopeeContext(): Promise<BrowserContext> {
-  await visibleLoginIfNeeded();
+  await ensureShopeeConnected();
   const account = listAccounts().find((x) => x.service === "shopee");
   if (!account?.profileDir) throw new Error("Shopee account profile is unavailable.");
   return chromium.launchPersistentContext(account.profileDir, {
-    headless: false,
+    headless: true,
     executablePath: chromePath(),
     viewport: { width: 1440, height: 1000 },
   });
@@ -71,10 +71,9 @@ async function searchShopee(page: Page, query: string): Promise<Product[]> {
   await page.waitForTimeout(5000);
   const blocked = await page.locator("body").innerText().catch(() => "");
   if (/verify|captcha|robot|unusual traffic|ตรวจสอบ/i.test(blocked) && !/ขายแล้ว|฿|บาท/i.test(blocked)) {
-    throw new Error("Shopee verification is active. Complete it manually in the opened Chrome window, then run the same command again.");
+    throw new Error("Shopee verification is active. Reconnect Shopee in Account Center, then run the same command again.");
   }
 
-  // IMPORTANT: pass JavaScript as a string so tsx/esbuild cannot inject __name helpers into browser code.
   const rows = await page.evaluate(`(() => {
     const clean = (v) => String(v ?? "").replace(/\\s+/g, " ").trim();
     const out = [];
@@ -156,7 +155,6 @@ async function readDetailInPage(page: Page, url: string): Promise<Partial<Produc
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
   await page.waitForTimeout(3500);
 
-  // Same reason as searchShopee: keep all browser-side JavaScript inside a string.
   const result = await page.evaluate(`(() => {
     const clean = (v) => String(v ?? "").replace(/\\s+/g, " ").trim();
     const parse = (v) => {
