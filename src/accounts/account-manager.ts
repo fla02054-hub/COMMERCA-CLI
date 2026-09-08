@@ -112,6 +112,10 @@ export async function openAccount(service: AccountService): Promise<void> {
   console.log(`[ACCOUNT] ${ACCOUNT_SERVICES[service].label} opened with its saved browser profile.`);
 }
 
+/**
+ * Run automation with the already-connected Account Center session.
+ * Login is handled only by loginAccount(); normal automation is headless.
+ */
 export async function withAccountPage<T>(
   service: AccountService,
   task: (page: Page) => Promise<T>,
@@ -130,9 +134,9 @@ export async function withAccountPage<T>(
   }
 
   const context = await chromium.launchPersistentContext(record.profileDir, {
-    headless: false,
+    headless: true,
     executablePath,
-    viewport: null,
+    viewport: { width: 1440, height: 1000 },
   });
 
   try {
