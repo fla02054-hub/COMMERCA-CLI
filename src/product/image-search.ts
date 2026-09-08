@@ -1,4 +1,3 @@
-import "node:fs";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { chromium, type BrowserContext, type Page } from "playwright";
@@ -20,7 +19,8 @@ async function geminiJson<T>(prompt: string, image?: { mimeType: string; bytes: 
   const parts: Record<string, unknown>[] = [{ text: prompt }];
   if (image) parts.push({ inline_data: { mime_type: image.mimeType, data: image.bytes.toString("base64") } });
   const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent?key=${encodeURIComponent(GEMINI_KEY)}`, {
-    method: "POST", headers: { "content-type": "application/json" },
+    method: "POST",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({ contents: [{ parts }], generationConfig: { temperature: 0.1, responseMimeType: "application/json" } }),
   });
   if (!response.ok) throw new Error(`Gemini ${response.status}: ${await response.text()}`);
@@ -58,7 +58,11 @@ async function openShopeeContext(): Promise<BrowserContext> {
   await visibleLoginIfNeeded();
   const account = listAccounts().find((x) => x.service === "shopee");
   if (!account?.profileDir) throw new Error("Shopee account profile is unavailable.");
-  return chromium.launchPersistentContext(account.profileDir, { headless: false, executablePath: chromePath(), viewport: { width: 1440, height: 1000 } });
+  return chromium.launchPersistentContext(account.profileDir, {
+    headless: false,
+    executablePath: chromePath(),
+    viewport: { width: 1440, height: 1000 },
+  });
 }
 
 async function searchShopee(page: Page, query: string): Promise<Product[]> {
@@ -69,29 +73,37 @@ async function searchShopee(page: Page, query: string): Promise<Product[]> {
   if (/verify|captcha|robot|unusual traffic|ตรวจสอบ/i.test(blocked) && !/ขายแล้ว|฿|บาท/i.test(blocked)) {
     throw new Error("Shopee verification is active. Complete it manually in the opened Chrome window, then run the same command again.");
   }
-  const rows = await page.evaluate(() => {
-    function clean(v: unknown) {
-      return String(v ?? "").replace(/\s+/g, " ").trim();
-    }
-    const out: { name: string; url: string; text: string; image?: string }[] = [];
-    const seen = new Set<string>();
-    const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"));
+
+  // IMPORTANT: pass JavaScript as a string so tsx/esbuild cannot inject __name helpers into browser code.
+  const rows = await page.evaluate(`(() => {
+    const clean = (v) => String(v ?? "").replace(/\\s+/g, " ").trim();
+    const out = [];
+    const seen = new Set();
+    const anchors = Array.from(document.querySelectorAll("a[href]"));
     for (const a of anchors) {
       const href = a.href;
-      if (!/shopee\.co\.th\//i.test(href)) continue;
-      if (!/(?:product|i\.|\.\d+\.\d+)/i.test(href)) continue;
+      if (!/shopee\\.co\\.th\\//i.test(href)) continue;
+      if (!/(?:product|i\\.|\\.\\d+\\.\\d+)/i.test(href)) continue;
       const text = clean(a.innerText || a.textContent);
       if (text.length < 4) continue;
       const key = href.split("?")[0];
       if (seen.has(key)) continue;
       seen.add(key);
-      const image = a.querySelector("img")?.src;
-      out.push({ name: text.slice(0, 300), url: key, text: text.slice(0, 800), image });
+      const img = a.querySelector("img");
+      out.push({ name: text.slice(0, 300), url: key, image: img ? img.src : undefined });
       if (out.length >= 30) break;
     }
     return out;
-  });
-  return rows.map((r, i) => ({ id: `candidate-${Date.now()}-${i}`, name: r.name, url: r.url, image: r.image, source: "shopee-search", discoveredAt: new Date().toISOString() }));
+  })()`);
+
+  return (rows as { name: string; url: string; image?: string }[]).map((r, i) => ({
+    id: `candidate-${Date.now()}-${i}`,
+    name: r.name,
+    url: r.url,
+    image: r.image,
+    source: "shopee-search",
+    discoveredAt: new Date().toISOString(),
+  }));
 }
 
 export async function discoverProductFromImage(imagePath: string): Promise<ImageProductDiscovery> {
@@ -101,7 +113,8 @@ export async function discoverProductFromImage(imagePath: string): Promise<Image
     `Analyze the supplied product image for Shopee Thailand product discovery. Identify only what is visibly/evidently supported by the image. Return JSON with productName, aliases, and 3-5 precise Thai search queries. Do not invent brand, model, specifications, price, discount, reviews, or claims. Queries should maximize exact product matching, not marketing wording.`,
     { mimeType, bytes },
   );
-  const queries = [...new Set([vision.productName, ...(vision.aliases || []), ...(vision.queries || [])].map(x => String(x || "").trim()).filter(Boolean))].slice(0, 5);
+  const queries = [...new Set([vision.productName, ...(vision.aliases || []), ...(vision.queries || [])]
+    .map((x) => String(x || "").trim()).filter(Boolean))].slice(0, 5);
   if (!queries.length) throw new Error("Gemini could not identify a usable Shopee search query from the image.");
 
   const context = await openShopeeContext();
@@ -111,7 +124,7 @@ export async function discoverProductFromImage(imagePath: string): Promise<Image
     for (const query of queries) {
       console.log(`[PRODUCT] Shopee search: ${query}`);
       const found = await searchShopee(page, query);
-      for (const item of found) if (!all.some(x => x.url === item.url)) all.push(item);
+      for (const item of found) if (!all.some((x) => x.url === item.url)) all.push(item);
     }
     if (!all.length) throw new Error("Shopee search returned no product candidates. Try a clearer product screenshot.");
 
@@ -119,7 +132,10 @@ export async function discoverProductFromImage(imagePath: string): Promise<Image
       `You are matching a product screenshot to Shopee search candidates. Choose up to 8 candidates that most likely represent the exact same product shown in the image. Use ONLY candidate names/URLs below and the supplied image. Do not use price as a matching criterion. Return JSON {"indexes":[...],"reason":"..."}. Candidate indexes are zero-based.\n\nCANDIDATES:\n${all.slice(0, 60).map((x, i) => `[${i}] ${x.name} | ${x.url}`).join("\n")}`,
       { mimeType, bytes },
     );
-    const chosen = (shortlist.indexes || []).filter(i => Number.isInteger(i) && i >= 0 && i < all.length).slice(0, 8).map(i => all[i]);
+    const chosen = (shortlist.indexes || [])
+      .filter((i) => Number.isInteger(i) && i >= 0 && i < all.length)
+      .slice(0, 8)
+      .map((i) => all[i]);
     const selected: Product[] = [];
     for (const candidate of chosen) {
       try {
@@ -139,51 +155,57 @@ export async function discoverProductFromImage(imagePath: string): Promise<Image
 async function readDetailInPage(page: Page, url: string): Promise<Partial<Product> | undefined> {
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
   await page.waitForTimeout(3500);
-  const result = await page.evaluate(() => {
-    function clean(v: unknown) {
-      return String(v ?? "").replace(/\s+/g, " ").trim();
-    }
-    function parse(v: unknown) {
-      const m = String(v ?? "").replace(/,/g, "").match(/([0-9]+(?:\.[0-9]+)?)([KkMm])?/);
+
+  // Same reason as searchShopee: keep all browser-side JavaScript inside a string.
+  const result = await page.evaluate(`(() => {
+    const clean = (v) => String(v ?? "").replace(/\\s+/g, " ").trim();
+    const parse = (v) => {
+      const m = String(v ?? "").replace(/,/g, "").match(/([0-9]+(?:\\.[0-9]+)?)([KkMm])?/);
       if (!m) return undefined;
       let n = Number(m[1]);
       if (m[2]?.toLowerCase() === "k") n *= 1000;
       if (m[2]?.toLowerCase() === "m") n *= 1000000;
       return n;
-    }
-    function parseJsonLd(n: HTMLScriptElement) {
-      try {
-        const v = JSON.parse(n.textContent || "");
-        return Array.isArray(v) ? v : [v];
-      } catch {
-        return [];
-      }
-    }
+    };
     const body = clean(document.body?.innerText);
-    if (/verify|captcha|robot|unusual traffic/i.test(body) && !/ขายแล้ว|฿|บาท/i.test(body)) throw new Error("Shopee verification is active.");
-    const lines = (document.body?.innerText || "").split("\n").map(clean).filter(Boolean);
-    const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]')).flatMap(parseJsonLd);
-    const p: any = scripts.find((x: any) => x?.["@type"] === "Product") || {};
+    if (/verify|captcha|robot|unusual traffic/i.test(body) && !/ขายแล้ว|฿|บาท/i.test(body)) {
+      throw new Error("Shopee verification is active.");
+    }
+    const lines = (document.body?.innerText || "").split("\\n").map(clean).filter(Boolean);
+    const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]'));
+    const jsonLd = [];
+    for (const node of scripts) {
+      try {
+        const value = JSON.parse(node.textContent || "");
+        if (Array.isArray(value)) jsonLd.push(...value); else jsonLd.push(value);
+      } catch {}
+    }
+    const p = jsonLd.find((x) => x && x["@type"] === "Product") || {};
     const offers = p.offers || {};
     const agg = p.aggregateRating || {};
-    const meta = document.querySelector('meta[property="og:title"]')?.getAttribute("content") || document.title;
-    const name = clean(p.name) || clean(meta).replace(/\s*\|\s*Shopee.*$/i, "");
-    const price = parse(offers.price) ?? parse(lines.find(x => /฿|บาท/.test(x)));
-    const seller = clean(document.querySelector('[data-sqe="shop-name"], [data-testid="shop-name"], [class*="shop-name"], [class*="ShopName"]')?.textContent);
-    const sold = lines.find(x => /ขายแล้ว|sold/i.test(x));
-    const promos = lines.filter(x => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(x) && x.length < 220);
-    const salesMatch = sold?.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\s*[KkMm]?)/i);
+    const meta = document.querySelector('meta[property="og:title"]');
+    const metaTitle = meta ? meta.getAttribute("content") : document.title;
+    const name = clean(p.name) || clean(metaTitle).replace(/\\s*\\|\\s*Shopee.*$/i, "");
+    const price = parse(offers.price) ?? parse(lines.find((x) => /฿|บาท/.test(x)));
+    const sellerNode = document.querySelector('[data-sqe="shop-name"], [data-testid="shop-name"], [class*="shop-name"], [class*="ShopName"]');
+    const seller = sellerNode ? clean(sellerNode.textContent) : "";
+    const sold = lines.find((x) => /ขายแล้ว|sold/i.test(x));
+    const salesMatch = sold ? sold.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\\s*[KkMm]?)/i) : null;
+    const promos = lines.filter((x) => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(x) && x.length < 220);
+    const imageNode = document.querySelector('meta[property="og:image"]');
     return {
       name,
       price,
       seller: seller || undefined,
       rating: parse(agg.ratingValue),
       reviewCount: parse(agg.reviewCount ?? agg.ratingCount),
-      salesCount: parse(salesMatch?.[1]),
+      salesCount: parse(salesMatch ? salesMatch[1] : undefined),
       promotion: promos.join(" | ") || undefined,
-      image: document.querySelector('meta[property="og:image"]')?.getAttribute("content") || undefined,
+      image: imageNode ? imageNode.getAttribute("content") || undefined : undefined,
     };
-  });
-  if (!result.name) return undefined;
-  return result as Partial<Product>;
+  })()`);
+
+  const data = result as Partial<Product>;
+  if (!data.name) return undefined;
+  return data;
 }
