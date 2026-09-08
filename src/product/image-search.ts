@@ -70,13 +70,16 @@ async function searchShopee(page: Page, query: string): Promise<Product[]> {
     throw new Error("Shopee verification is active. Complete it manually in the opened Chrome window, then run the same command again.");
   }
   const rows = await page.evaluate(() => {
-    const clean = (v: unknown) => String(v ?? "").replace(/\\s+/g, " ").trim();
+    function clean(v: unknown) {
+      return String(v ?? "").replace(/\s+/g, " ").trim();
+    }
     const out: { name: string; url: string; text: string; image?: string }[] = [];
     const seen = new Set<string>();
-    for (const a of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'))) {
+    const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>("a[href]"));
+    for (const a of anchors) {
       const href = a.href;
       if (!/shopee\.co\.th\//i.test(href)) continue;
-      if (!/(?:product|i\\.|\\.\\d+\\.\\d+)/i.test(href)) continue;
+      if (!/(?:product|i\.|\.\d+\.\d+)/i.test(href)) continue;
       const text = clean(a.innerText || a.textContent);
       if (text.length < 4) continue;
       const key = href.split("?")[0];
@@ -137,22 +140,49 @@ async function readDetailInPage(page: Page, url: string): Promise<Partial<Produc
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
   await page.waitForTimeout(3500);
   const result = await page.evaluate(() => {
-    const clean = (v: unknown) => String(v ?? "").replace(/\\s+/g, " ").trim();
+    function clean(v: unknown) {
+      return String(v ?? "").replace(/\s+/g, " ").trim();
+    }
+    function parse(v: unknown) {
+      const m = String(v ?? "").replace(/,/g, "").match(/([0-9]+(?:\.[0-9]+)?)([KkMm])?/);
+      if (!m) return undefined;
+      let n = Number(m[1]);
+      if (m[2]?.toLowerCase() === "k") n *= 1000;
+      if (m[2]?.toLowerCase() === "m") n *= 1000000;
+      return n;
+    }
+    function parseJsonLd(n: HTMLScriptElement) {
+      try {
+        const v = JSON.parse(n.textContent || "");
+        return Array.isArray(v) ? v : [v];
+      } catch {
+        return [];
+      }
+    }
     const body = clean(document.body?.innerText);
     if (/verify|captcha|robot|unusual traffic/i.test(body) && !/ขายแล้ว|฿|บาท/i.test(body)) throw new Error("Shopee verification is active.");
-    const lines = (document.body?.innerText || "").split("\\n").map(clean).filter(Boolean);
-    const parse = (v: unknown) => { const m = String(v ?? "").replace(/,/g, "").match(/([0-9]+(?:\\.[0-9]+)?)([KkMm])?/); if (!m) return undefined; let n = Number(m[1]); if (m[2]?.toLowerCase() === "k") n *= 1000; if (m[2]?.toLowerCase() === "m") n *= 1000000; return n; };
-    const scripts = Array.from(document.querySelectorAll('script[type="application/ld+json"]')).flatMap(n => { try { const v = JSON.parse(n.textContent || ""); return Array.isArray(v) ? v : [v]; } catch { return []; } });
+    const lines = (document.body?.innerText || "").split("\n").map(clean).filter(Boolean);
+    const scripts = Array.from(document.querySelectorAll<HTMLScriptElement>('script[type="application/ld+json"]')).flatMap(parseJsonLd);
     const p: any = scripts.find((x: any) => x?.["@type"] === "Product") || {};
     const offers = p.offers || {};
     const agg = p.aggregateRating || {};
     const meta = document.querySelector('meta[property="og:title"]')?.getAttribute("content") || document.title;
-    const name = clean(p.name) || clean(meta).replace(/\\s*\\|\\s*Shopee.*$/i, "");
+    const name = clean(p.name) || clean(meta).replace(/\s*\|\s*Shopee.*$/i, "");
     const price = parse(offers.price) ?? parse(lines.find(x => /฿|บาท/.test(x)));
     const seller = clean(document.querySelector('[data-sqe="shop-name"], [data-testid="shop-name"], [class*="shop-name"], [class*="ShopName"]')?.textContent);
     const sold = lines.find(x => /ขายแล้ว|sold/i.test(x));
     const promos = lines.filter(x => /คูปอง|coupon|voucher|โค้ด|โปรโมชั่น|ส่งฟรี/i.test(x) && x.length < 220);
-    return { name, price, seller: seller || undefined, rating: parse(agg.ratingValue), reviewCount: parse(agg.reviewCount ?? agg.ratingCount), salesCount: parse(sold?.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\\s*[KkMm]?)/i)?.[1]), promotion: promos.join(" | ") || undefined, image: document.querySelector('meta[property="og:image"]')?.getAttribute("content") || undefined };
+    const salesMatch = sold?.match(/(?:ขายแล้ว|sold)[^0-9]*([0-9,.]+\s*[KkMm]?)/i);
+    return {
+      name,
+      price,
+      seller: seller || undefined,
+      rating: parse(agg.ratingValue),
+      reviewCount: parse(agg.reviewCount ?? agg.ratingCount),
+      salesCount: parse(salesMatch?.[1]),
+      promotion: promos.join(" | ") || undefined,
+      image: document.querySelector('meta[property="og:image"]')?.getAttribute("content") || undefined,
+    };
   });
   if (!result.name) return undefined;
   return result as Partial<Product>;
