@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { chromium, type BrowserContext } from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright";
 import { ACCOUNT_SERVICES, type AccountRecord, type AccountService } from "./types.js";
 
 const ROOT = process.env.COMMERCA_ACCOUNT_ROOT || join(homedir(), ".commerca", "accounts");
@@ -110,6 +110,37 @@ export async function openAccount(service: AccountService): Promise<void> {
   const page = context.pages()[0] ?? await context.newPage();
   await page.goto(ACCOUNT_SERVICES[service].url, { waitUntil: "domcontentloaded", timeout: 60000 }).catch(() => undefined);
   console.log(`[ACCOUNT] ${ACCOUNT_SERVICES[service].label} opened with its saved browser profile.`);
+}
+
+export async function withAccountPage<T>(
+  service: AccountService,
+  task: (page: Page) => Promise<T>,
+): Promise<T> {
+  const record = listAccounts().find((x) => x.service === service);
+
+  if (!record || record.status !== "CONNECTED") {
+    throw new Error(
+      `${ACCOUNT_SERVICES[service].label} is not connected. Run: account login ${service}`,
+    );
+  }
+
+  const executablePath = chromeExecutable();
+  if (!executablePath) {
+    throw new Error("Google Chrome was not found. Set COMMERCA_CHROME_PATH if needed.");
+  }
+
+  const context = await chromium.launchPersistentContext(record.profileDir, {
+    headless: false,
+    executablePath,
+    viewport: null,
+  });
+
+  try {
+    const page = context.pages()[0] ?? await context.newPage();
+    return await task(page);
+  } finally {
+    await context.close();
+  }
 }
 
 export function accountService(value: string | undefined): AccountService {
