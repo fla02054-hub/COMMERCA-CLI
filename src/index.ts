@@ -1,4 +1,4 @@
-import { FlowEngine } from "./core/flow.js";
+import { CONNECTIONS, FlowEngine, FLOW } from "./core/flow.js";
 import type { FlowNode, ProductInput } from "./core/types.js";
 import { ProductNode } from "./nodes/product.js";
 import { AnalysisNode } from "./nodes/analysis.js";
@@ -9,7 +9,14 @@ import { PostAnalysisNode } from "./nodes/post-analysis.js";
 import { Aiden } from "./aiden/aiden.js";
 import { listJobs, loadJob } from "./core/store.js";
 
-const nodes: FlowNode[] = [new ProductNode(), new AnalysisNode(), new ContentNode(), new ProductionNode(), new PostNode(), new PostAnalysisNode()];
+const nodes: FlowNode[] = [
+  new ProductNode(),
+  new AnalysisNode(),
+  new ContentNode(),
+  new ProductionNode(),
+  new PostNode(),
+  new PostAnalysisNode()
+];
 const flow = new FlowEngine(nodes);
 const aiden = new Aiden(flow);
 
@@ -24,11 +31,17 @@ function number(flag: string): number | undefined {
 }
 
 function printFlow(): void {
-  console.log("AIDEN (Manager / AI Agent)");
-  console.log("  ↓");
-  nodes.forEach((n, i) => console.log(`${i + 1}. ${n.name}${i < nodes.length - 1 ? "\n  ↓" : ""}`));
-  console.log("  ↓");
   console.log("AIDEN");
+  console.log("  │");
+  console.log("  ▼");
+  FLOW.forEach((name, index) => {
+    console.log(`[${name}]`);
+    if (index < FLOW.length - 1) console.log("    │\n    ▼");
+  });
+  console.log("    │");
+  console.log("    └────────► AIDEN");
+  console.log("\nConnections:");
+  for (const connection of CONNECTIONS) console.log(`  ${connection.from} ──► ${connection.to}`);
 }
 
 function printJob(job: ReturnType<typeof loadJob>): void {
@@ -41,7 +54,14 @@ async function main(): Promise<void> {
   if (command === "job" && subcommand === "list") { listJobs().forEach(j => console.log(`${j.id}  ${j.status}  ${j.currentNode ?? "done"}`)); return; }
   if (command === "job" && subcommand === "show") { const id = value("--id"); if (!id) throw new Error("--id is required"); printJob(loadJob(id)); return; }
   if (command === "workflow" && subcommand === "run") {
-    const input: ProductInput = { name: value("--product") ?? "", price: number("--price"), originalPrice: number("--original-price"), url: value("--url"), image: value("--image"), source: value("--source") ?? "manual" };
+    const input: ProductInput = {
+      name: value("--product") ?? "",
+      price: number("--price"),
+      originalPrice: number("--original-price"),
+      url: value("--url"),
+      image: value("--image"),
+      source: value("--source") ?? "manual"
+    };
     const job = await aiden.run(input);
     printJob(job);
     return;
