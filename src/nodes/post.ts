@@ -1,9 +1,15 @@
-import type { FlowNode, NodeContext } from "../core/types.js";
+import type { FlowNode, NodeContext, NodePayload, PostData, ProductionData } from "../core/types.js";
 
 export class PostNode implements FlowNode {
   readonly name = "POST" as const;
-  async execute({ job }: NodeContext): Promise<void> {
-    if (!job.content || !job.production) throw new Error("POST requires CONTENT and PRODUCTION outputs.");
-    job.post = { platform: "facebook", status: "ready" };
+  readonly inputPorts = [{ name: "production" }] as const;
+  readonly outputPorts = [{ name: "post" }] as const;
+
+  async execute({ job, input }: NodeContext): Promise<NodePayload> {
+    const production = input.production as ProductionData | undefined;
+    if (!job.content || !production) throw new Error("POST requires CONTENT context and PRODUCTION output.");
+    const post: PostData = { platform: "facebook", status: "ready" };
+    job.post = post;
+    return { post };
   }
 }
