@@ -10,7 +10,16 @@ export class Aiden {
   createJob(input: ProductInput): JobState {
     if (!input.name?.trim()) throw new Error("AIDEN requires a product name.");
     const now = new Date().toISOString();
-    const job: JobState = { id: randomUUID(), status: "queued", currentNode: null, input, history: [], createdAt: now, updatedAt: now };
+    const job: JobState = {
+      id: randomUUID(),
+      status: "queued",
+      currentNode: null,
+      input,
+      nodeExecutions: {},
+      history: [],
+      createdAt: now,
+      updatedAt: now
+    };
     saveJob(job);
     return job;
   }
@@ -21,8 +30,6 @@ export class Aiden {
   }
 
   async resume(job: JobState): Promise<JobState> {
-    const current = job.currentNode;
-    const index = current ? ["PRODUCT", "ANALYSIS", "CONTENT", "PRODUCTION", "POST", "POST ANALYSIS"].indexOf(current) : 0;
-    return this.flow.run(job, Math.max(0, index));
+    return this.flow.resume(job);
   }
 }
