@@ -46,6 +46,7 @@ export interface PostData {
   postId?: string;
   postUrl?: string;
   error?: string;
+  idempotencyKey?: string;
 }
 
 export interface PostAnalysisData {
@@ -69,13 +70,25 @@ export interface NodePort {
 
 export interface NodeExecution {
   status: NodeExecutionStatus;
+  attempt: number;
   startedAt?: string;
   completedAt?: string;
   error?: string;
 }
 
+export interface JobHistoryItem {
+  node: NodeName;
+  status: "started" | "completed" | "failed";
+  at: string;
+  attempt?: number;
+  message?: string;
+}
+
 export interface JobState {
   id: string;
+  executionId: string;
+  workflowName: string;
+  workflowVersion: number;
   status: JobStatus;
   currentNode: NodeName | null;
   input: ProductInput;
@@ -87,7 +100,7 @@ export interface JobState {
   postAnalysis?: PostAnalysisData;
   nodeData: Partial<Record<NodeName, NodePayload>>;
   nodeExecutions: Partial<Record<NodeName, NodeExecution>>;
-  history: Array<{ node: NodeName; status: "started" | "completed" | "failed"; at: string; message?: string }>;
+  history: JobHistoryItem[];
   createdAt: string;
   updatedAt: string;
   error?: string;
@@ -96,6 +109,7 @@ export interface JobState {
 export interface NodeContext {
   job: JobState;
   input: NodePayload;
+  attempt: number;
 }
 
 export interface FlowNode {
@@ -110,4 +124,11 @@ export interface NodeConnection {
   output: string;
   to: NodeName;
   input: string;
+}
+
+export interface WorkflowDefinition {
+  name: string;
+  version: number;
+  nodes: readonly NodeName[];
+  connections: readonly NodeConnection[];
 }
