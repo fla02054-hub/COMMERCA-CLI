@@ -37,7 +37,8 @@ function printFlow(): void {
   console.log(`Workflow: ${graph.workflow} v${graph.version}`);
   console.log(`  │\n  ▼`);
   for (const [index, name] of graph.nodes.entries()) {
-    const node = nodes[index];
+    const node = nodes.find(n => n.name === name);
+    if (!node) throw new Error(`Registered node missing: ${name}`);
     console.log(`┌─────────────────┐`);
     console.log(`│ ${name.padEnd(15)} │`);
     console.log(`└─────────────────┘`);
@@ -53,7 +54,7 @@ function printFlow(): void {
 function printJob(job: ReturnType<typeof loadJob>): void { console.log(JSON.stringify(job, null, 2)); }
 
 function help(): void {
-  console.log(`COMMERCA-CLI\n\nCommands:\n  flow\n  workflow show\n  workflow validate\n  workflow plan\n  workflow run --product <name> [--price n] [--original-price n] [--url url] [--image path] [--source name] [--retry n] [--timeout-ms n] [--dry-run]\n  workflow resume --id <id> [--retry n] [--timeout-ms n]\n  job list\n  job show --id <id>`);
+  console.log(`COMMERCA-CLI\n\nCommands:\n  flow\n  workflow show\n  workflow validate\n  workflow plan\n  workflow run --product <name> [--price n] [--original-price n] [--url url] [--image path] [--source name] [--retry n] [--timeout-ms n] [--dry-run]\n  workflow resume --id <id> [--retry n] [--timeout-ms n]\n  job list\n  job show --id <id>\n  job cancel --id <id>`);
 }
 
 async function main(): Promise<void> {
@@ -99,6 +100,13 @@ async function main(): Promise<void> {
   if (command === "job" && subcommand === "show") {
     const id = value("--id"); if (!id) throw new Error("--id is required");
     printJob(loadJob(id)); return;
+  }
+
+  if (command === "job" && subcommand === "cancel") {
+    const id = value("--id"); if (!id) throw new Error("--id is required");
+    const job = aiden.cancel(loadJob(id));
+    printJob(job);
+    return;
   }
 
   help();
