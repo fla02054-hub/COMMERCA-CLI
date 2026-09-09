@@ -1,5 +1,6 @@
 import type { FlowNode, JobState, NodeConnection, NodeContext, NodeName, NodePayload, WorkflowDefinition } from "./types.js";
-import { saveJob } from "./store.js";
+import { saveJob, isJobCancellationRequested } from "./store.js";
+import { validateNodeOutput, validateProductInput } from "./contracts.js";
 import { DEFAULT_WORKFLOW } from "./workflow.js";
 import { NodeRegistry } from "./registry.js";
 
@@ -70,6 +71,9 @@ export class FlowEngine {
     job.workflowName = this.workflow.name;
     job.workflowVersion = this.workflow.version;
 
+    if (!this.workflow.nodes.includes(startNode)) throw new Error(`Unknown workflow node: ${startNode}`);
+    if (startNode === this.workflow.nodes[0]) validateProductInput(initialInput);
+
     if (options.dryRun) {
       job.status = "completed";
       job.currentNode = null;
@@ -79,6 +83,8 @@ export class FlowEngine {
       return job;
     }
 
+    if (isJobCancellationRequested(job.id)) return this.cancel(job, "Cancellation requested before execution.");
+
     let nodeName: NodeName | undefined = startNode;
     let input: NodePayload = initialInput;
     job.status = "running";
@@ -86,7 +92,10 @@ export class FlowEngine {
     saveJob(job);
 
     while (nodeName) {
+      if (isJobCancellationRequested(job.id)) return this.cancel(job, "Cancellation requested.");
+
       const node = this.registry.get(nodeName);
+      this.validateInput(node, input);
       const previousAttempt = job.nodeExecutions[node.name]?.attempt ?? 0;
       const startedAt = new Date().toISOString();
       job.currentNode = node.name;
@@ -102,6 +111,7 @@ export class FlowEngine {
 
         for (let i = 1; i <= maxAttempts; i++) {
           usedAttempts = i;
+          if (isJobCancellationRequested(job.id)) return this.cancel(job, "Cancellation requested during execution.");
           const controller = new AbortController();
           try {
             const context: NodeContext = {
@@ -124,6 +134,7 @@ export class FlowEngine {
           }
         }
 
+        if (isJobCancellationRequested(job.id)) return this.cancel(job, "Cancellation requested after node execution.");
         if (!output) throw lastError ?? new Error(`Node ${node.name} produced no output.`);
         this.validateOutput(node, output);
         job.nodeData[node.name] = output;
@@ -162,10 +173,25 @@ export class FlowEngine {
 
   async resume(job: JobState, options: RunOptions = {}): Promise<JobState> {
     if (job.status === "completed") return job;
+    if (job.status === "cancelled") throw new Error(`Job ${job.id} is cancelled and cannot be resumed.`);
     const node = job.currentNode ?? [...job.history].reverse().find(h => h.status === "failed")?.node ?? this.workflow.nodes[0];
     const connection = this.previous.get(node);
     const input = connection ? { [connection.input]: job.nodeData[connection.from]?.[connection.output] } : job.input;
     return this.run(job, node, input, options);
+  }
+
+  cancel(job: JobState, message = "Job cancelled."): JobState {
+    if (job.status === "completed") return job;
+    const at = new Date().toISOString();
+    if (job.currentNode) {
+      const current = job.nodeExecutions[job.currentNode];
+      if (current?.status === "running") job.nodeExecutions[job.currentNode] = { ...current, status: "cancelled", completedAt: at, error: message };
+      job.history.push({ node: job.currentNode, status: "cancelled", at, attempt: current?.attempt, message });
+    }
+    job.status = "cancelled";
+    job.error = message;
+    saveJob(job);
+    return job;
   }
 
   private async executeWithTimeout(node: FlowNode, context: NodeContext, timeoutMs: number, controller: AbortController): Promise<NodePayload> {
@@ -214,9 +240,18 @@ export class FlowEngine {
     if (reachable.size !== this.workflow.nodes.length) throw new Error("Workflow must be one connected linear graph.");
   }
 
+  private validateInput(node: FlowNode, input: NodePayload): void {
+    if (!input || typeof input !== "object" || Array.isArray(input)) throw new Error(`Node ${node.name} input must be an object payload.`);
+    for (const port of node.inputPorts) {
+      if (port.required !== false && !(port.name in input)) throw new Error(`Node ${node.name} missing required input port ${port.name}.`);
+      if (port.required !== false && input[port.name] === undefined) throw new Error(`Node ${node.name} input ${port.name} is undefined.`);
+    }
+  }
+
   private validateOutput(node: FlowNode, output: NodePayload): void {
     if (!output || typeof output !== "object" || Array.isArray(output)) throw new Error(`Node ${node.name} must return an object payload.`);
     for (const p of node.outputPorts) if (p.required !== false && !(p.name in output)) throw new Error(`Node ${node.name} did not produce required output port ${p.name}.`);
+    validateNodeOutput(node.name, output);
   }
 
   private syncTypedData(job: JobState, node: NodeName, output: NodePayload): void {
