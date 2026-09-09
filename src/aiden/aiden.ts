@@ -1,4 +1,4 @@
-import type { FlowEngine } from "../core/flow.js";
+import type { FlowEngine, RunOptions } from "../core/flow.js";
 import { saveJob } from "../core/store.js";
 import type { JobState, ProductInput } from "../core/types.js";
 import { randomUUID } from "node:crypto";
@@ -12,8 +12,12 @@ export class Aiden {
   createJob(input: ProductInput): JobState {
     if (!input.name?.trim()) throw new Error("AIDEN requires a product name.");
     const now = new Date().toISOString();
+    const workflow = this.flow.getWorkflow();
     const job: JobState = {
       id: randomUUID(),
+      executionId: randomUUID(),
+      workflowName: workflow.name,
+      workflowVersion: workflow.version,
       status: "queued",
       currentNode: null,
       input,
@@ -27,12 +31,12 @@ export class Aiden {
     return job;
   }
 
-  async run(input: ProductInput): Promise<JobState> {
+  async run(input: ProductInput, options: RunOptions = {}): Promise<JobState> {
     const job = this.createJob(input);
-    return this.flow.run(job);
+    return this.flow.run(job, "PRODUCT", job.input, options);
   }
 
-  async resume(job: JobState): Promise<JobState> {
-    return this.flow.resume(job);
+  async resume(job: JobState, options: RunOptions = {}): Promise<JobState> {
+    return this.flow.resume(job, options);
   }
 }
