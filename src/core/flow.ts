@@ -16,8 +16,8 @@ export class FlowEngine {
   constructor(nodes: readonly FlowNode[], private readonly workflow: WorkflowDefinition = DEFAULT_WORKFLOW) {
     this.registry = new NodeRegistry();
     this.registry.registerAll(nodes);
-    this.validateGraph();
     for (const c of workflow.connections) { this.next.set(c.from, c); this.previous.set(c.to, c); }
+    this.validateGraph();
   }
 
   getGraph() { return { admin: "AIDEN", workflow: this.workflow.name, version: this.workflow.version, nodes: [...this.workflow.nodes], connections: this.workflow.connections.map(c => ({ ...c })), entry: "AIDEN -> PRODUCT", exit: "POST ANALYSIS -> AIDEN" } as const; }
@@ -34,49 +34,82 @@ export class FlowEngine {
 
   async run(job: JobState, startNode: NodeName = this.workflow.nodes[0], initialInput: NodePayload = job.input, options: RunOptions = {}): Promise<JobState> {
     const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
-    job.nodeData ??= {}; job.nodeExecutions ??= {}; job.history ??= {} as never;
-    job.workflowName = this.workflow.name; job.workflowVersion = this.workflow.version;
+    job.nodeData ??= {};
+    job.nodeExecutions ??= {};
+    job.history ??= [];
+    job.workflowName = this.workflow.name;
+    job.workflowVersion = this.workflow.version;
 
     if (options.dryRun) {
-      job.status = "completed"; job.currentNode = null; job.error = undefined;
+      job.status = "completed";
+      job.currentNode = null;
+      job.error = undefined;
       job.history.push({ node: startNode, status: "completed", at: new Date().toISOString(), message: `DRY RUN: ${this.plan(startNode).join(" -> ")}` });
-      saveJob(job); return job;
+      saveJob(job);
+      return job;
     }
 
     let nodeName: NodeName | undefined = startNode;
     let input: NodePayload = initialInput;
-    job.status = "running"; job.error = undefined; saveJob(job);
+    job.status = "running";
+    job.error = undefined;
+    saveJob(job);
 
     while (nodeName) {
       const node = this.registry.get(nodeName);
       const previousAttempt = job.nodeExecutions[node.name]?.attempt ?? 0;
       const startedAt = new Date().toISOString();
-      job.currentNode = node.name; job.status = "running";
+      job.currentNode = node.name;
+      job.status = "running";
       job.nodeExecutions[node.name] = { status: "running", attempt: previousAttempt + 1, startedAt };
-      job.history.push({ node: node.name, status: "started", at: startedAt, attempt: previousAttempt + 1 }); saveJob(job);
+      job.history.push({ node: node.name, status: "started", at: startedAt, attempt: previousAttempt + 1 });
+      saveJob(job);
 
       try {
-        let output: NodePayload | undefined; let lastError: Error | undefined; let usedAttempts = 0;
+        let output: NodePayload | undefined;
+        let lastError: Error | undefined;
+        let usedAttempts = 0;
         for (let i = 1; i <= maxAttempts; i++) {
           usedAttempts = i;
-          try { output = await node.execute({ job, input, attempt: previousAttempt + i } satisfies NodeContext); break; }
-          catch (error) { lastError = error instanceof Error ? error : new Error(String(error)); if (i < maxAttempts) { job.history.push({ node: node.name, status: "started", at: new Date().toISOString(), attempt: previousAttempt + i + 1, message: `retry after: ${lastError.message}` }); saveJob(job); } }
+          try {
+            output = await node.execute({ job, input, attempt: previousAttempt + i } satisfies NodeContext);
+            break;
+          } catch (error) {
+            lastError = error instanceof Error ? error : new Error(String(error));
+            if (i < maxAttempts) {
+              job.history.push({ node: node.name, status: "started", at: new Date().toISOString(), attempt: previousAttempt + i + 1, message: `retry after: ${lastError.message}` });
+              saveJob(job);
+            }
+          }
         }
         if (!output) throw lastError ?? new Error(`Node ${node.name} produced no output.`);
         this.validateOutput(node, output);
-        job.nodeData[node.name] = output; this.syncTypedData(job, node.name, output);
+        job.nodeData[node.name] = output;
+        this.syncTypedData(job, node.name, output);
+
         const completedAt = new Date().toISOString();
         job.nodeExecutions[node.name] = { status: "completed", attempt: previousAttempt + usedAttempts, startedAt, completedAt };
-        job.history.push({ node: node.name, status: "completed", at: completedAt, attempt: previousAttempt + usedAttempts }); saveJob(job);
+        job.history.push({ node: node.name, status: "completed", at: completedAt, attempt: previousAttempt + usedAttempts });
+        saveJob(job);
 
         const connection = this.next.get(node.name);
-        if (!connection) { job.currentNode = null; job.status = "completed"; saveJob(job); return job; }
-        input = { [connection.input]: output[connection.output] }; nodeName = connection.to;
+        if (!connection) {
+          job.currentNode = null;
+          job.status = "completed";
+          saveJob(job);
+          return job;
+        }
+        input = { [connection.input]: output[connection.output] };
+        nodeName = connection.to;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error); const failedAt = new Date().toISOString();
-        job.status = "failed"; job.error = message;
+        const message = error instanceof Error ? error.message : String(error);
+        const failedAt = new Date().toISOString();
+        job.status = "failed";
+        job.error = message;
         job.nodeExecutions[node.name] = { status: "failed", attempt: previousAttempt + maxAttempts, startedAt, completedAt: failedAt, error: message };
-        job.history.push({ node: node.name, status: "failed", at: failedAt, attempt: previousAttempt + maxAttempts, message }); saveJob(job); return job;
+        job.history.push({ node: node.name, status: "failed", at: failedAt, attempt: previousAttempt + maxAttempts, message });
+        saveJob(job);
+        return job;
       }
     }
     return job;
@@ -95,18 +128,25 @@ export class FlowEngine {
     if (new Set(this.workflow.nodes).size !== this.workflow.nodes.length) throw new Error("Workflow contains duplicate nodes.");
     for (const name of this.workflow.nodes) if (!this.registry.has(name)) throw new Error(`Workflow node is not registered: ${name}`);
     if (this.workflow.connections.length !== this.workflow.nodes.length - 1) throw new Error("Linear workflow must have exactly nodes - 1 connections.");
-    const incoming = new Set<NodeName>(); const outgoing = new Set<NodeName>();
+    const incoming = new Set<NodeName>();
+    const outgoing = new Set<NodeName>();
     for (const c of this.workflow.connections) {
       if (!this.workflow.nodes.includes(c.from) || !this.workflow.nodes.includes(c.to)) throw new Error(`Invalid connection: ${c.from} -> ${c.to}`);
       if (outgoing.has(c.from)) throw new Error(`Node has multiple outgoing connections: ${c.from}`);
       if (incoming.has(c.to)) throw new Error(`Node has multiple incoming connections: ${c.to}`);
-      const from = this.registry.get(c.from); const to = this.registry.get(c.to);
+      const from = this.registry.get(c.from);
+      const to = this.registry.get(c.to);
       if (!from.outputPorts.some(p => p.name === c.output)) throw new Error(`Missing output port ${c.from}.${c.output}`);
       if (!to.inputPorts.some(p => p.name === c.input)) throw new Error(`Missing input port ${c.to}.${c.input}`);
       outgoing.add(c.from); incoming.add(c.to);
     }
-    const reachable = new Set<NodeName>(); let current: NodeName | undefined = this.workflow.nodes[0];
-    while (current) { if (reachable.has(current)) throw new Error(`Workflow contains a cycle at ${current}.`); reachable.add(current); current = this.next.get(current)?.to; }
+    const reachable = new Set<NodeName>();
+    let current: NodeName | undefined = this.workflow.nodes[0];
+    while (current) {
+      if (reachable.has(current)) throw new Error(`Workflow contains a cycle at ${current}.`);
+      reachable.add(current);
+      current = this.next.get(current)?.to;
+    }
     if (reachable.size !== this.workflow.nodes.length) throw new Error("Workflow must be one connected linear graph.");
   }
 
