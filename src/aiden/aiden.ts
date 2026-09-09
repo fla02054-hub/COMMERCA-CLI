@@ -1,5 +1,5 @@
 import type { FlowEngine, RunOptions } from "../core/flow.js";
-import { saveJob } from "../core/store.js";
+import { clearJobCancellation, requestJobCancellation, saveJob } from "../core/store.js";
 import type { JobState, ProductInput } from "../core/types.js";
 import { randomUUID } from "node:crypto";
 
@@ -27,6 +27,7 @@ export class Aiden {
       createdAt: now,
       updatedAt: now
     };
+    clearJobCancellation(job.id);
     saveJob(job);
     return job;
   }
@@ -37,6 +38,12 @@ export class Aiden {
   }
 
   async resume(job: JobState, options: RunOptions = {}): Promise<JobState> {
+    clearJobCancellation(job.id);
     return this.flow.resume(job, options);
+  }
+
+  cancel(job: JobState): JobState {
+    requestJobCancellation(job.id);
+    return this.flow.cancel(job, "Cancellation requested by AIDEN.");
   }
 }
