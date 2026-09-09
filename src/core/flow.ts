@@ -1,124 +1,123 @@
-import type { FlowNode, JobState, NodeConnection, NodeContext, NodeName, NodePayload } from "./types.js";
+import type { FlowNode, JobState, NodeConnection, NodeContext, NodeName, NodePayload, WorkflowDefinition } from "./types.js";
 import { saveJob } from "./store.js";
+import { DEFAULT_WORKFLOW } from "./workflow.js";
+import { NodeRegistry } from "./registry.js";
 
-export const FLOW: NodeName[] = ["PRODUCT", "ANALYSIS", "CONTENT", "PRODUCTION", "POST", "POST ANALYSIS"];
+export const FLOW: NodeName[] = [...DEFAULT_WORKFLOW.nodes];
+export const CONNECTIONS: NodeConnection[] = DEFAULT_WORKFLOW.connections.map(c => ({ ...c }));
 
-/** AIDEN is the Admin boundary. Only the six entries below are executable Flow Nodes. */
-export const CONNECTIONS: NodeConnection[] = [
-  { from: "PRODUCT", output: "product", to: "ANALYSIS", input: "product" },
-  { from: "ANALYSIS", output: "analysis", to: "CONTENT", input: "analysis" },
-  { from: "CONTENT", output: "content", to: "PRODUCTION", input: "content" },
-  { from: "PRODUCTION", output: "production", to: "POST", input: "production" },
-  { from: "POST", output: "post", to: "POST ANALYSIS", input: "post" }
-];
+export interface RunOptions { maxAttempts?: number; dryRun?: boolean; }
 
 export class FlowEngine {
-  private readonly byName: Map<NodeName, FlowNode>;
-  private readonly next: Map<NodeName, NodeConnection>;
+  private readonly next = new Map<NodeName, NodeConnection>();
+  private readonly previous = new Map<NodeName, NodeConnection>();
+  private readonly registry: NodeRegistry;
 
-  constructor(private readonly nodes: FlowNode[]) {
+  constructor(nodes: readonly FlowNode[], private readonly workflow: WorkflowDefinition = DEFAULT_WORKFLOW) {
+    this.registry = new NodeRegistry();
+    this.registry.registerAll(nodes);
     this.validateGraph();
-    this.byName = new Map(nodes.map(node => [node.name, node]));
-    this.next = new Map(CONNECTIONS.map(connection => [connection.from, connection]));
+    for (const c of workflow.connections) { this.next.set(c.from, c); this.previous.set(c.to, c); }
   }
 
-  getGraph() {
-    return {
-      admin: "AIDEN",
-      nodes: [...FLOW],
-      connections: CONNECTIONS.map(connection => ({ ...connection })),
-      entry: "AIDEN -> PRODUCT",
-      exit: "POST ANALYSIS -> AIDEN"
-    } as const;
+  getGraph() { return { admin: "AIDEN", workflow: this.workflow.name, version: this.workflow.version, nodes: [...this.workflow.nodes], connections: this.workflow.connections.map(c => ({ ...c })), entry: "AIDEN -> PRODUCT", exit: "POST ANALYSIS -> AIDEN" } as const; }
+  getWorkflow(): WorkflowDefinition { return { name: this.workflow.name, version: this.workflow.version, nodes: [...this.workflow.nodes], connections: this.workflow.connections.map(c => ({ ...c })) }; }
+  validate(): void { this.validateGraph(); }
+
+  plan(startNode: NodeName = this.workflow.nodes[0]): NodeName[] {
+    if (!this.workflow.nodes.includes(startNode)) throw new Error(`Unknown workflow node: ${startNode}`);
+    const result: NodeName[] = [];
+    let current: NodeName | undefined = startNode;
+    while (current) { result.push(current); current = this.next.get(current)?.to; }
+    return result;
   }
 
-  async run(job: JobState, startNode: NodeName = "PRODUCT", initialInput: NodePayload = job.input): Promise<JobState> {
-    job.nodeData ??= {};
-    job.nodeExecutions ??= {};
-    job.history ??= [];
+  async run(job: JobState, startNode: NodeName = this.workflow.nodes[0], initialInput: NodePayload = job.input, options: RunOptions = {}): Promise<JobState> {
+    const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
+    job.nodeData ??= {}; job.nodeExecutions ??= {}; job.history ??= {} as never;
+    job.workflowName = this.workflow.name; job.workflowVersion = this.workflow.version;
+
+    if (options.dryRun) {
+      job.status = "completed"; job.currentNode = null; job.error = undefined;
+      job.history.push({ node: startNode, status: "completed", at: new Date().toISOString(), message: `DRY RUN: ${this.plan(startNode).join(" -> ")}` });
+      saveJob(job); return job;
+    }
 
     let nodeName: NodeName | undefined = startNode;
     let input: NodePayload = initialInput;
-    job.status = "running";
-    job.error = undefined;
-    job.updatedAt = new Date().toISOString();
-    saveJob(job);
+    job.status = "running"; job.error = undefined; saveJob(job);
 
     while (nodeName) {
-      const node = this.byName.get(nodeName);
-      if (!node) throw new Error(`Node ${nodeName} is not part of the Flow.`);
-
+      const node = this.registry.get(nodeName);
+      const previousAttempt = job.nodeExecutions[node.name]?.attempt ?? 0;
       const startedAt = new Date().toISOString();
-      job.currentNode = node.name;
-      job.status = "running";
-      job.nodeExecutions[node.name] = { status: "running", startedAt };
-      job.history.push({ node: node.name, status: "started", at: startedAt });
-      saveJob(job);
+      job.currentNode = node.name; job.status = "running";
+      job.nodeExecutions[node.name] = { status: "running", attempt: previousAttempt + 1, startedAt };
+      job.history.push({ node: node.name, status: "started", at: startedAt, attempt: previousAttempt + 1 }); saveJob(job);
 
       try {
-        const output = await node.execute({ job, input });
+        let output: NodePayload | undefined; let lastError: Error | undefined; let usedAttempts = 0;
+        for (let i = 1; i <= maxAttempts; i++) {
+          usedAttempts = i;
+          try { output = await node.execute({ job, input, attempt: previousAttempt + i } satisfies NodeContext); break; }
+          catch (error) { lastError = error instanceof Error ? error : new Error(String(error)); if (i < maxAttempts) { job.history.push({ node: node.name, status: "started", at: new Date().toISOString(), attempt: previousAttempt + i + 1, message: `retry after: ${lastError.message}` }); saveJob(job); } }
+        }
+        if (!output) throw lastError ?? new Error(`Node ${node.name} produced no output.`);
         this.validateOutput(node, output);
-        job.nodeData[node.name] = output;
-
+        job.nodeData[node.name] = output; this.syncTypedData(job, node.name, output);
         const completedAt = new Date().toISOString();
-        job.nodeExecutions[node.name] = { status: "completed", startedAt, completedAt };
-        job.history.push({ node: node.name, status: "completed", at: completedAt });
-        job.updatedAt = completedAt;
-        saveJob(job);
+        job.nodeExecutions[node.name] = { status: "completed", attempt: previousAttempt + usedAttempts, startedAt, completedAt };
+        job.history.push({ node: node.name, status: "completed", at: completedAt, attempt: previousAttempt + usedAttempts }); saveJob(job);
 
         const connection = this.next.get(node.name);
-        if (!connection) {
-          job.currentNode = null;
-          job.status = "completed";
-          saveJob(job);
-          return job;
-        }
-
-        input = { [connection.input]: output[connection.output] };
-        nodeName = connection.to;
+        if (!connection) { job.currentNode = null; job.status = "completed"; saveJob(job); return job; }
+        input = { [connection.input]: output[connection.output] }; nodeName = connection.to;
       } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const failedAt = new Date().toISOString();
-        job.status = "failed";
-        job.error = message;
-        job.nodeExecutions[node.name] = { status: "failed", startedAt, completedAt: failedAt, error: message };
-        job.history.push({ node: node.name, status: "failed", at: failedAt, message });
-        job.updatedAt = failedAt;
-        saveJob(job);
-        return job;
+        const message = error instanceof Error ? error.message : String(error); const failedAt = new Date().toISOString();
+        job.status = "failed"; job.error = message;
+        job.nodeExecutions[node.name] = { status: "failed", attempt: previousAttempt + maxAttempts, startedAt, completedAt: failedAt, error: message };
+        job.history.push({ node: node.name, status: "failed", at: failedAt, attempt: previousAttempt + maxAttempts, message }); saveJob(job); return job;
       }
     }
-
     return job;
   }
 
-  async resume(job: JobState): Promise<JobState> {
+  async resume(job: JobState, options: RunOptions = {}): Promise<JobState> {
     if (job.status === "completed") return job;
-    const node = job.currentNode ?? [...job.history].reverse().find(item => item.status === "failed")?.node ?? "PRODUCT";
-    const previous = FLOW[Math.max(0, FLOW.indexOf(node) - 1)];
-    const connection = previous ? this.next.get(previous) : undefined;
-    const input = previous && connection ? { [connection.input]: job.nodeData?.[previous]?.[connection.output] } : job.input;
-    return this.run(job, node, input);
+    const node = job.currentNode ?? [...job.history].reverse().find(h => h.status === "failed")?.node ?? this.workflow.nodes[0];
+    const connection = this.previous.get(node);
+    const input = connection ? { [connection.input]: job.nodeData[connection.from]?.[connection.output] } : job.input;
+    return this.run(job, node, input, options);
   }
 
   private validateGraph(): void {
-    if (this.nodes.length !== FLOW.length || this.nodes.map(node => node.name).join("|") !== FLOW.join("|")) {
-      throw new Error("Flow must contain exactly the six Nodes in order.");
+    if (!this.workflow.nodes.length) throw new Error("Workflow must contain at least one node.");
+    if (new Set(this.workflow.nodes).size !== this.workflow.nodes.length) throw new Error("Workflow contains duplicate nodes.");
+    for (const name of this.workflow.nodes) if (!this.registry.has(name)) throw new Error(`Workflow node is not registered: ${name}`);
+    if (this.workflow.connections.length !== this.workflow.nodes.length - 1) throw new Error("Linear workflow must have exactly nodes - 1 connections.");
+    const incoming = new Set<NodeName>(); const outgoing = new Set<NodeName>();
+    for (const c of this.workflow.connections) {
+      if (!this.workflow.nodes.includes(c.from) || !this.workflow.nodes.includes(c.to)) throw new Error(`Invalid connection: ${c.from} -> ${c.to}`);
+      if (outgoing.has(c.from)) throw new Error(`Node has multiple outgoing connections: ${c.from}`);
+      if (incoming.has(c.to)) throw new Error(`Node has multiple incoming connections: ${c.to}`);
+      const from = this.registry.get(c.from); const to = this.registry.get(c.to);
+      if (!from.outputPorts.some(p => p.name === c.output)) throw new Error(`Missing output port ${c.from}.${c.output}`);
+      if (!to.inputPorts.some(p => p.name === c.input)) throw new Error(`Missing input port ${c.to}.${c.input}`);
+      outgoing.add(c.from); incoming.add(c.to);
     }
-    const names = new Set(this.nodes.map(node => node.name));
-    if (CONNECTIONS.length !== FLOW.length - 1) throw new Error("Flow must have exactly five Node connections.");
-    for (const connection of CONNECTIONS) {
-      const from = this.nodes.find(node => node.name === connection.from);
-      const to = this.nodes.find(node => node.name === connection.to);
-      if (!names.has(connection.from) || !names.has(connection.to)) throw new Error(`Invalid connection: ${connection.from} -> ${connection.to}`);
-      if (!from?.outputPorts.some(port => port.name === connection.output)) throw new Error(`Missing output port ${connection.from}.${connection.output}`);
-      if (!to?.inputPorts.some(port => port.name === connection.input)) throw new Error(`Missing input port ${connection.to}.${connection.input}`);
-    }
+    const reachable = new Set<NodeName>(); let current: NodeName | undefined = this.workflow.nodes[0];
+    while (current) { if (reachable.has(current)) throw new Error(`Workflow contains a cycle at ${current}.`); reachable.add(current); current = this.next.get(current)?.to; }
+    if (reachable.size !== this.workflow.nodes.length) throw new Error("Workflow must be one connected linear graph.");
   }
 
-  private validateOutput(node: FlowNode, output: NodePayload): void {
-    for (const port of node.outputPorts) {
-      if (!(port.name in output)) throw new Error(`Node ${node.name} did not produce required output port ${port.name}.`);
-    }
+  private validateOutput(node: FlowNode, output: NodePayload): void { for (const p of node.outputPorts) if (!(p.name in output)) throw new Error(`Node ${node.name} did not produce required output port ${p.name}.`); }
+
+  private syncTypedData(job: JobState, node: NodeName, output: NodePayload): void {
+    if (node === "PRODUCT") job.product = output.product as JobState["product"];
+    if (node === "ANALYSIS") job.analysis = output.analysis as JobState["analysis"];
+    if (node === "CONTENT") job.content = output.content as JobState["content"];
+    if (node === "PRODUCTION") job.production = output.production as JobState["production"];
+    if (node === "POST") job.post = output.post as JobState["post"];
+    if (node === "POST ANALYSIS") job.postAnalysis = output.analysis as JobState["postAnalysis"];
   }
 }
