@@ -1,11 +1,14 @@
-import type { FlowNode, NodeContext } from "../core/types.js";
+import type { ContentData, FlowNode, NodeContext, NodePayload, ProductData, ProductionData } from "../core/types.js";
 
 export class ProductionNode implements FlowNode {
   readonly name = "PRODUCTION" as const;
-  async execute({ job }: NodeContext): Promise<void> {
+  readonly inputPorts = [{ name: "content" }] as const;
+  readonly outputPorts = [{ name: "production" }] as const;
+
+  async execute({ job, input }: NodeContext): Promise<NodePayload> {
     const p = job.product;
-    const c = job.content;
-    if (!p || !c) throw new Error("PRODUCTION requires PRODUCT and CONTENT outputs.");
+    const c = input.content as ContentData | undefined;
+    if (!p || !c) throw new Error("PRODUCTION requires PRODUCT context and CONTENT output.");
     const subject = p.name;
     const imagePrompt = `Vertical 9:16 commercial product image. Show ${subject} as the clear hero subject, realistic lighting, useful context, product details visible, clean composition, no invented brand claims, no unrelated objects.`;
     const scenes = [
@@ -16,6 +19,8 @@ export class ProductionNode implements FlowNode {
       `Scene 5: return to the product with the key offer and purchase action.`
     ];
     const videoPrompt = `${c.hook}. ${scenes.join(" ")} Keep the product identifiable and central throughout.`;
-    job.production = { imagePrompt, videoPrompt, scenes };
+    const production: ProductionData = { imagePrompt, videoPrompt, scenes };
+    job.production = production;
+    return { production };
   }
 }
