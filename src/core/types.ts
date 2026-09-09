@@ -137,3 +137,9 @@ export interface WorkflowDefinition {
   nodes: readonly NodeName[];
   connections: readonly NodeConnection[];
 }
+
+export interface ExecutionOptions {
+  maxAttempts?: number;
+  timeoutMs?: number;
+  dryRun?: boolean;
+}
