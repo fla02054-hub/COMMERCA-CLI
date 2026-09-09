@@ -45,6 +45,38 @@ test("workflow executes all six nodes", async () => {
   assert.ok(job.executionId);
 });
 
+test("invalid product input is rejected before execution", async () => {
+  const flow = new FlowEngine(nodes());
+  const aiden = new Aiden(flow);
+  await assert.rejects(() => aiden.run({ name: "" }), /product name/);
+});
+
+test("required input ports are enforced at runtime", async () => {
+  const broken: FlowNode = {
+    name: "ANALYSIS",
+    inputPorts: [{ name: "product" }],
+    outputPorts: [{ name: "analysis" }],
+    async execute(): Promise<NodePayload> { return new AnalysisNode().execute({} as NodeContext); }
+  };
+  const flow = new FlowEngine([new ProductNode(), broken, new ContentNode(), new ProductionNode(), new PostNode(), new PostAnalysisNode()]);
+  const job = await new Aiden(flow).run({ name: "input contract" });
+  assert.equal(job.status, "failed");
+  assert.match(job.error ?? "", /missing required input port/);
+});
+
+test("invalid node output is rejected by the runtime contract", async () => {
+  const broken: FlowNode = {
+    name: "ANALYSIS",
+    inputPorts: [{ name: "product" }],
+    outputPorts: [{ name: "analysis" }],
+    async execute(): Promise<NodePayload> { return { analysis: { category: "x" } }; }
+  };
+  const flow = new FlowEngine([new ProductNode(), broken, new ContentNode(), new ProductionNode(), new PostNode(), new PostAnalysisNode()]);
+  const job = await new Aiden(flow).run({ name: "output contract" });
+  assert.equal(job.status, "failed");
+  assert.match(job.error ?? "", /audience/);
+});
+
 test("node retry works without changing workflow", async () => {
   let attempts = 0;
   const flaky: FlowNode = {
@@ -111,6 +143,15 @@ test("node timeout fails the current node", async () => {
   assert.equal(job.status, "failed");
   assert.equal(job.currentNode, "ANALYSIS");
   assert.match(job.error ?? "", /timed out/);
+});
+
+test("job can be cancelled and cannot be resumed", async () => {
+  const flow = new FlowEngine(nodes());
+  const aiden = new Aiden(flow);
+  const job = aiden.createJob({ name: "ทดสอบ cancel" });
+  const cancelled = aiden.cancel(job);
+  assert.equal(cancelled.status, "cancelled");
+  await assert.rejects(() => aiden.resume(cancelled), /cancelled/);
 });
 
 test("dry run never executes nodes", async () => {
