@@ -53,7 +53,7 @@ function printFlow(): void {
 function printJob(job: ReturnType<typeof loadJob>): void { console.log(JSON.stringify(job, null, 2)); }
 
 function help(): void {
-  console.log(`COMMERCA-CLI\n\nCommands:\n  flow\n  workflow show\n  workflow validate\n  workflow plan\n  workflow run --product <name> [--price n] [--original-price n] [--url url] [--image path] [--source name] [--retry n] [--dry-run]\n  workflow resume --id <id> [--retry n]\n  job list\n  job show --id <id>`);
+  console.log(`COMMERCA-CLI\n\nCommands:\n  flow\n  workflow show\n  workflow validate\n  workflow plan\n  workflow run --product <name> [--price n] [--original-price n] [--url url] [--image path] [--source name] [--retry n] [--timeout-ms n] [--dry-run]\n  workflow resume --id <id> [--retry n] [--timeout-ms n]\n  job list\n  job show --id <id>`);
 }
 
 async function main(): Promise<void> {
@@ -73,7 +73,8 @@ async function main(): Promise<void> {
       url: value("--url"), image: value("--image"), source: value("--source") ?? "manual"
     };
     const retry = number("--retry");
-    const job = await aiden.run(input, { maxAttempts: retry ?? 1, dryRun: has("--dry-run") });
+    const timeoutMs = number("--timeout-ms");
+    const job = await aiden.run(input, { maxAttempts: retry ?? 1, timeoutMs, dryRun: has("--dry-run") });
     printJob(job);
     return;
   }
@@ -82,7 +83,8 @@ async function main(): Promise<void> {
     const id = value("--id");
     if (!id) throw new Error("--id is required");
     const retry = number("--retry");
-    const job = await aiden.resume(loadJob(id), { maxAttempts: retry ?? 1 });
+    const timeoutMs = number("--timeout-ms");
+    const job = await aiden.resume(loadJob(id), { maxAttempts: retry ?? 1, timeoutMs });
     printJob(job);
     return;
   }
