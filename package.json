@@ -7,7 +7,7 @@
     "dev": "tsx src/cli/index.ts",
     "start": "tsx src/cli/index.ts",
     "agent:discord": "tsx src/discord/agent-gateway.ts",
-    "test": "node --import tsx --test test/autonomous-agent.test.ts test/content-creative.strategy.test.ts test/market-research.test.ts test/product-analysis.test.ts test/product-research.test.ts test/product-scoring.test.ts test/production.test.ts test/publishing.test.ts test/approval-gate.test.ts test/workflow-engine.test.ts src/runtime/job-store.test.ts",
+    "test": "node --import tsx --test test/autonomous-agent.test.ts test/content-creative.strategy.test.ts test/market-research.test.ts test/product-analysis.test.ts test/product-research.test.ts test/product-scoring.test.ts test/production.test.ts test/publishing.test.ts test/approval-gate.test.ts test/workflow-engine.test.ts test/graph-engine.test.ts src/runtime/job-store.test.ts",
     "test:e2e": "node --import tsx --test test/workflow.e2e.test.ts test/production.render.e2e.test.ts test/qc.final-mp4.e2e.test.ts test/final-content-package.e2e.test.ts test/approval-gate.test.ts test/autonomous-agent.test.ts",
     "test:production": "node --import tsx --test test/production.render.e2e.test.ts",
     "test:qc": "node --import tsx --test test/qc.final-mp4.e2e.test.ts",
@@ -17,13 +17,6 @@
     "package:publish": "tsx src/cli/index.ts package publish",
     "workflow:e2e": "node --import tsx --test test/workflow.e2e.test.ts"
   },
-  "dependencies": {
-    "ffmpeg-static": "^5.2.0",
-    "playwright": "^1.55.0"
-  },
-  "devDependencies": {
-    "@types/node": "^26.3.0",
-    "tsx": "^4.23.12",
-    "typescript": "^7.0.2"
-  }
+  "dependencies": { "ffmpeg-static": "^5.2.0", "playwright": "^1.55.0" },
+  "devDependencies": { "@types/node": "^26.3.0", "tsx": "^4.23.12", "typescript": "^7.0.2" }
 }
