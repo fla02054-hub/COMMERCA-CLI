@@ -33,9 +33,12 @@ export class FlowEngine {
   }
 
   async run(job: JobState, startNode: NodeName = "PRODUCT", initialInput: NodePayload = job.input): Promise<JobState> {
+    job.nodeData ??= {};
+    job.nodeExecutions ??= {};
+    job.history ??= [];
+
     let nodeName: NodeName | undefined = startNode;
     let input: NodePayload = initialInput;
-
     job.status = "running";
     job.error = undefined;
     job.updatedAt = new Date().toISOString();
@@ -94,7 +97,7 @@ export class FlowEngine {
     const node = job.currentNode ?? [...job.history].reverse().find(item => item.status === "failed")?.node ?? "PRODUCT";
     const previous = FLOW[Math.max(0, FLOW.indexOf(node) - 1)];
     const connection = previous ? this.next.get(previous) : undefined;
-    const input = previous && connection ? { [connection.input]: job.nodeData[previous]?.[connection.output] } : job.input;
+    const input = previous && connection ? { [connection.input]: job.nodeData?.[previous]?.[connection.output] } : job.input;
     return this.run(job, node, input);
   }
 
@@ -102,23 +105,15 @@ export class FlowEngine {
     if (this.nodes.length !== FLOW.length || this.nodes.map(node => node.name).join("|") !== FLOW.join("|")) {
       throw new Error("Flow must contain exactly the six Nodes in order.");
     }
-
     const names = new Set(this.nodes.map(node => node.name));
     if (CONNECTIONS.length !== FLOW.length - 1) throw new Error("Flow must have exactly five Node connections.");
-
     for (const connection of CONNECTIONS) {
-      const from = this.byNameSafe(connection.from);
-      const to = this.byNameSafe(connection.to);
+      const from = this.nodes.find(node => node.name === connection.from);
+      const to = this.nodes.find(node => node.name === connection.to);
       if (!names.has(connection.from) || !names.has(connection.to)) throw new Error(`Invalid connection: ${connection.from} -> ${connection.to}`);
-      if (!from.outputPorts.some(port => port.name === connection.output)) throw new Error(`Missing output port ${connection.from}.${connection.output}`);
-      if (!to.inputPorts.some(port => port.name === connection.input)) throw new Error(`Missing input port ${connection.to}.${connection.input}`);
+      if (!from?.outputPorts.some(port => port.name === connection.output)) throw new Error(`Missing output port ${connection.from}.${connection.output}`);
+      if (!to?.inputPorts.some(port => port.name === connection.input)) throw new Error(`Missing input port ${connection.to}.${connection.input}`);
     }
-  }
-
-  private byNameSafe(name: NodeName): FlowNode {
-    const node = this.nodes.find(item => item.name === name);
-    if (!node) throw new Error(`Missing Node ${name}.`);
-    return node;
   }
 
   private validateOutput(node: FlowNode, output: NodePayload): void {
