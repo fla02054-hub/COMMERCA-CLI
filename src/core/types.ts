@@ -61,6 +61,12 @@ export interface PostAnalysisData {
   nextAction: string;
 }
 
+export type NodePayload = Record<string, unknown>;
+
+export interface NodePort {
+  name: string;
+}
+
 export interface NodeExecution {
   status: NodeExecutionStatus;
   startedAt?: string;
@@ -79,6 +85,7 @@ export interface JobState {
   production?: ProductionData;
   post?: PostData;
   postAnalysis?: PostAnalysisData;
+  nodeData: Partial<Record<NodeName, NodePayload>>;
   nodeExecutions: Partial<Record<NodeName, NodeExecution>>;
   history: Array<{ node: NodeName; status: "started" | "completed" | "failed"; at: string; message?: string }>;
   createdAt: string;
@@ -88,14 +95,19 @@ export interface JobState {
 
 export interface NodeContext {
   job: JobState;
+  input: NodePayload;
 }
 
 export interface FlowNode {
   readonly name: NodeName;
-  execute(context: NodeContext): Promise<void>;
+  readonly inputPorts: readonly NodePort[];
+  readonly outputPorts: readonly NodePort[];
+  execute(context: NodeContext): Promise<NodePayload>;
 }
 
 export interface NodeConnection {
   from: NodeName;
+  output: string;
   to: NodeName;
+  input: string;
 }
