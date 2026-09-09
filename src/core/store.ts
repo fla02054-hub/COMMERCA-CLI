@@ -3,10 +3,16 @@ import fs from "node:fs";
 import path from "node:path";
 
 const dir = path.resolve(process.cwd(), ".commerca", "jobs");
+const cancelDir = path.resolve(process.cwd(), ".commerca", "cancel");
 
 function fileFor(id: string): string {
   if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid job id.");
   return path.join(dir, `${id}.json`);
+}
+
+function cancelFileFor(id: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Invalid job id.");
+  return path.join(cancelDir, `${id}.cancel`);
 }
 
 export function saveJob(job: JobState): void {
@@ -34,11 +40,27 @@ export function listJobs(): JobState[] {
     .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
 
+export function requestJobCancellation(id: string): void {
+  loadJob(id);
+  fs.mkdirSync(cancelDir, { recursive: true });
+  fs.writeFileSync(cancelFileFor(id), new Date().toISOString(), "utf8");
+}
+
+export function isJobCancellationRequested(id: string): boolean {
+  return fs.existsSync(cancelFileFor(id));
+}
+
+export function clearJobCancellation(id: string): void {
+  const file = cancelFileFor(id);
+  if (fs.existsSync(file)) fs.rmSync(file);
+}
+
 export function normalizeJob(job: JobState): JobState {
   const now = new Date().toISOString();
   job.executionId ??= job.id;
   job.workflowName ??= "commerce-default";
   job.workflowVersion ??= 1;
+  job.currentNode ??= null;
   job.nodeData ??= {};
   job.nodeExecutions ??= {};
   job.history ??= [];
