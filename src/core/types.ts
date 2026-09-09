@@ -1,5 +1,6 @@
 export type NodeName = "PRODUCT" | "ANALYSIS" | "CONTENT" | "PRODUCTION" | "POST" | "POST ANALYSIS";
 export type JobStatus = "queued" | "running" | "waiting" | "completed" | "failed";
+export type NodeExecutionStatus = "idle" | "running" | "completed" | "failed";
 
 export interface ProductInput {
   name: string;
@@ -60,6 +61,13 @@ export interface PostAnalysisData {
   nextAction: string;
 }
 
+export interface NodeExecution {
+  status: NodeExecutionStatus;
+  startedAt?: string;
+  completedAt?: string;
+  error?: string;
+}
+
 export interface JobState {
   id: string;
   status: JobStatus;
@@ -71,6 +79,7 @@ export interface JobState {
   production?: ProductionData;
   post?: PostData;
   postAnalysis?: PostAnalysisData;
+  nodeExecutions: Partial<Record<NodeName, NodeExecution>>;
   history: Array<{ node: NodeName; status: "started" | "completed" | "failed"; at: string; message?: string }>;
   createdAt: string;
   updatedAt: string;
@@ -84,4 +93,9 @@ export interface NodeContext {
 export interface FlowNode {
   readonly name: NodeName;
   execute(context: NodeContext): Promise<void>;
+}
+
+export interface NodeConnection {
+  from: NodeName;
+  to: NodeName;
 }
