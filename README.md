@@ -24,6 +24,8 @@ POST ANALYSIS
 AIDEN
 ```
 
+The Core Engine owns workflow execution. AIDEN starts/resumes jobs; the Engine follows the workflow connections automatically. A Node never decides which Node runs next.
+
 The core is deliberately independent of Agent, Model, AI provider, credentials, Discord, Shopee, Facebook, Higgsfield, or any other external service. Those can be plugged into individual Nodes later without changing the workflow engine.
 
 ## Core guarantees
@@ -36,12 +38,14 @@ The core is deliberately independent of Agent, Model, AI provider, credentials, 
 - Atomic job-file writes
 - Execution ID and Workflow version on every new Job
 - Per-Node execution state and attempt count
-- Retry support
+- Retry support without restarting completed Nodes
 - Resume from the failed/current Node
 - Execution history
+- Per-node timeout with `AbortSignal`
 - Dry-run planning
 - Idempotency key reserved for the POST side-effect boundary
 - Backward-compatible loading of older Job files
+- Automated build and test in GitHub Actions
 
 ## Commands
 
@@ -61,6 +65,12 @@ Retry a failed Node up to three attempts:
 
 ```text
 npm run dev -- workflow run --product "Product name" --retry 3
+```
+
+Set a per-node timeout:
+
+```text
+npm run dev -- workflow run --product "Product name" --timeout-ms 60000
 ```
 
 Resume a failed Job:
@@ -86,8 +96,42 @@ Dry run:
 npm run dev -- workflow run --product "Product name" --dry-run
 ```
 
+## Execution model
+
+The Engine executes the graph in this order:
+
+```text
+create Job
+  ↓
+PRODUCT
+  ↓ save state
+ANALYSIS
+  ↓ save state
+CONTENT
+  ↓ save state
+PRODUCTION
+  ↓ save state
+POST
+  ↓ save state
+POST ANALYSIS
+  ↓
+completed
+```
+
+For every Node the Engine:
+
+1. marks the Node as `running`;
+2. persists the Job;
+3. creates an execution context and abort signal;
+4. executes the Node, with retry and timeout handling;
+5. validates the returned output ports;
+6. persists the output and typed Job data;
+7. follows the configured connection to the next Node.
+
+If a Node fails, the Job becomes `failed` and the completed Nodes remain completed. `resume` reconstructs the failed Node's input from the persisted upstream output and continues from that Node.
+
 ## Data boundary
 
-Each Node receives a `NodeContext` containing the Job, the connected input payload, and the current attempt number. Each Node returns a payload containing its declared output ports. The engine validates and persists that output before moving to the next connection.
+Each Node receives a `NodeContext` containing the Job, the connected input payload, execution metadata, and an `AbortSignal`. Each Node returns a payload containing its declared output ports. The Engine validates and persists that output before moving to the next connection.
 
-This means future Agents/Models are implementation details inside Nodes, not dependencies of the Core.
+This keeps workflow control separate from business logic. Future Agents/Models are implementation details inside Nodes, not dependencies of the Core.
