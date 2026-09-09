@@ -1,6 +1,6 @@
 export type NodeName = "PRODUCT" | "ANALYSIS" | "CONTENT" | "PRODUCTION" | "POST" | "POST ANALYSIS";
-export type JobStatus = "queued" | "running" | "waiting" | "completed" | "failed";
-export type NodeExecutionStatus = "idle" | "running" | "completed" | "failed";
+export type JobStatus = "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled";
+export type NodeExecutionStatus = "idle" | "running" | "completed" | "failed" | "cancelled";
 
 export interface ProductInput {
   name: string;
@@ -66,6 +66,7 @@ export type NodePayload = Record<string, unknown>;
 
 export interface NodePort {
   name: string;
+  required?: boolean;
 }
 
 export interface NodeExecution {
@@ -78,7 +79,7 @@ export interface NodeExecution {
 
 export interface JobHistoryItem {
   node: NodeName;
-  status: "started" | "completed" | "failed";
+  status: "started" | "completed" | "failed" | "cancelled";
   at: string;
   attempt?: number;
   message?: string;
@@ -110,6 +111,10 @@ export interface NodeContext {
   job: JobState;
   input: NodePayload;
   attempt: number;
+  executionId: string;
+  workflowName: string;
+  workflowVersion: number;
+  signal: AbortSignal;
 }
 
 export interface FlowNode {
