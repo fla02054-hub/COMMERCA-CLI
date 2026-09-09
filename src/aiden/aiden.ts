@@ -5,6 +5,8 @@ import { randomUUID } from "node:crypto";
 
 export class Aiden {
   readonly name = "AIDEN";
+  readonly role = "ADMIN" as const;
+
   constructor(private readonly flow: FlowEngine) {}
 
   createJob(input: ProductInput): JobState {
@@ -15,6 +17,7 @@ export class Aiden {
       status: "queued",
       currentNode: null,
       input,
+      nodeData: {},
       nodeExecutions: {},
       history: [],
       createdAt: now,
