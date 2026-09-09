@@ -6,7 +6,11 @@ import { NodeRegistry } from "./registry.js";
 export const FLOW: NodeName[] = [...DEFAULT_WORKFLOW.nodes];
 export const CONNECTIONS: NodeConnection[] = DEFAULT_WORKFLOW.connections.map(c => ({ ...c }));
 
-export interface RunOptions { maxAttempts?: number; dryRun?: boolean; }
+export interface RunOptions {
+  maxAttempts?: number;
+  dryRun?: boolean;
+  timeoutMs?: number;
+}
 
 export class FlowEngine {
   private readonly next = new Map<NodeName, NodeConnection>();
@@ -16,24 +20,50 @@ export class FlowEngine {
   constructor(nodes: readonly FlowNode[], private readonly workflow: WorkflowDefinition = DEFAULT_WORKFLOW) {
     this.registry = new NodeRegistry();
     this.registry.registerAll(nodes);
-    for (const c of workflow.connections) { this.next.set(c.from, c); this.previous.set(c.to, c); }
+    for (const c of workflow.connections) {
+      this.next.set(c.from, c);
+      this.previous.set(c.to, c);
+    }
     this.validateGraph();
   }
 
-  getGraph() { return { admin: "AIDEN", workflow: this.workflow.name, version: this.workflow.version, nodes: [...this.workflow.nodes], connections: this.workflow.connections.map(c => ({ ...c })), entry: "AIDEN -> PRODUCT", exit: "POST ANALYSIS -> AIDEN" } as const; }
-  getWorkflow(): WorkflowDefinition { return { name: this.workflow.name, version: this.workflow.version, nodes: [...this.workflow.nodes], connections: this.workflow.connections.map(c => ({ ...c })) }; }
+  getGraph() {
+    return {
+      admin: "AIDEN",
+      workflow: this.workflow.name,
+      version: this.workflow.version,
+      nodes: [...this.workflow.nodes],
+      connections: this.workflow.connections.map(c => ({ ...c })),
+      entry: "AIDEN -> PRODUCT",
+      exit: "POST ANALYSIS -> AIDEN"
+    } as const;
+  }
+
+  getWorkflow(): WorkflowDefinition {
+    return {
+      name: this.workflow.name,
+      version: this.workflow.version,
+      nodes: [...this.workflow.nodes],
+      connections: this.workflow.connections.map(c => ({ ...c }))
+    };
+  }
+
   validate(): void { this.validateGraph(); }
 
   plan(startNode: NodeName = this.workflow.nodes[0]): NodeName[] {
     if (!this.workflow.nodes.includes(startNode)) throw new Error(`Unknown workflow node: ${startNode}`);
     const result: NodeName[] = [];
     let current: NodeName | undefined = startNode;
-    while (current) { result.push(current); current = this.next.get(current)?.to; }
+    while (current) {
+      result.push(current);
+      current = this.next.get(current)?.to;
+    }
     return result;
   }
 
   async run(job: JobState, startNode: NodeName = this.workflow.nodes[0], initialInput: NodePayload = job.input, options: RunOptions = {}): Promise<JobState> {
     const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 1));
+    const timeoutMs = options.timeoutMs === undefined ? 0 : Math.max(1, Math.floor(options.timeoutMs));
     job.nodeData ??= {};
     job.nodeExecutions ??= {};
     job.history ??= [];
@@ -69,10 +99,21 @@ export class FlowEngine {
         let output: NodePayload | undefined;
         let lastError: Error | undefined;
         let usedAttempts = 0;
+
         for (let i = 1; i <= maxAttempts; i++) {
           usedAttempts = i;
+          const controller = new AbortController();
           try {
-            output = await node.execute({ job, input, attempt: previousAttempt + i } satisfies NodeContext);
+            const context: NodeContext = {
+              job,
+              input,
+              attempt: previousAttempt + i,
+              executionId: job.executionId,
+              workflowName: this.workflow.name,
+              workflowVersion: this.workflow.version,
+              signal: controller.signal
+            };
+            output = await this.executeWithTimeout(node, context, timeoutMs, controller);
             break;
           } catch (error) {
             lastError = error instanceof Error ? error : new Error(String(error));
@@ -82,6 +123,7 @@ export class FlowEngine {
             }
           }
         }
+
         if (!output) throw lastError ?? new Error(`Node ${node.name} produced no output.`);
         this.validateOutput(node, output);
         job.nodeData[node.name] = output;
@@ -99,7 +141,10 @@ export class FlowEngine {
           saveJob(job);
           return job;
         }
-        input = { [connection.input]: output[connection.output] };
+
+        const nextValue = output[connection.output];
+        if (nextValue === undefined) throw new Error(`Node ${node.name} output ${connection.output} is undefined.`);
+        input = { [connection.input]: nextValue };
         nodeName = connection.to;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -121,6 +166,25 @@ export class FlowEngine {
     const connection = this.previous.get(node);
     const input = connection ? { [connection.input]: job.nodeData[connection.from]?.[connection.output] } : job.input;
     return this.run(job, node, input, options);
+  }
+
+  private async executeWithTimeout(node: FlowNode, context: NodeContext, timeoutMs: number, controller: AbortController): Promise<NodePayload> {
+    const execution = node.execute(context);
+    if (!timeoutMs) return execution;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        execution,
+        new Promise<NodePayload>((_, reject) => {
+          timer = setTimeout(() => {
+            controller.abort();
+            reject(new Error(`Node ${node.name} timed out after ${timeoutMs}ms.`));
+          }, timeoutMs);
+        })
+      ]);
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
   }
 
   private validateGraph(): void {
@@ -150,7 +214,10 @@ export class FlowEngine {
     if (reachable.size !== this.workflow.nodes.length) throw new Error("Workflow must be one connected linear graph.");
   }
 
-  private validateOutput(node: FlowNode, output: NodePayload): void { for (const p of node.outputPorts) if (!(p.name in output)) throw new Error(`Node ${node.name} did not produce required output port ${p.name}.`); }
+  private validateOutput(node: FlowNode, output: NodePayload): void {
+    if (!output || typeof output !== "object" || Array.isArray(output)) throw new Error(`Node ${node.name} must return an object payload.`);
+    for (const p of node.outputPorts) if (p.required !== false && !(p.name in output)) throw new Error(`Node ${node.name} did not produce required output port ${p.name}.`);
+  }
 
   private syncTypedData(job: JobState, node: NodeName, output: NodePayload): void {
     if (node === "PRODUCT") job.product = output.product as JobState["product"];
